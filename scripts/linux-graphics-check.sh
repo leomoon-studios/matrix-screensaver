@@ -37,7 +37,6 @@ wait_for_exit() {
 if [[ $mode == wayland ]]; then
   command -v hyprctl >/dev/null
   command -v jq >/dev/null
-  command -v wtype >/dev/null
   [[ -n ${WAYLAND_DISPLAY:-} ]]
   monitor_count=$(hyprctl monitors -j | jq 'length')
   ((monitor_count >= 2)) || { echo 'At least two Wayland outputs are required' >&2; exit 1; }
@@ -63,7 +62,7 @@ if [[ $mode == wayland ]]; then
     exit 1
   }
   sleep 0.2
-  wtype -k Escape
+  hyprctl dispatch "hl.dsp.send_shortcut({ mods = \"\", key = \"Escape\", window = \"address:$address\" })" >/dev/null
   wait_for_exit || { echo 'Wayland key dismissal failed' >&2; exit 1; }
 else
   command -v xdotool >/dev/null

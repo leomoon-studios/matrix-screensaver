@@ -32,7 +32,7 @@ after=$(hyprctl clients -j | jq '[.[] | select(.class == "org.omarchy.matrix-scr
 address=$(hyprctl clients -j | jq -r '.[] | select(.class == "org.omarchy.matrix-screensaver") | .address' | head -n 1)
 hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
 sleep 0.2
-wtype -k Escape
+hyprctl dispatch "hl.dsp.send_shortcut({ mods = \"\", key = \"Escape\", window = \"address:$address\" })" >/dev/null
 deadline=$((SECONDS + 10))
 while ((SECONDS < deadline)) && kill -0 "$child" 2>/dev/null; do sleep 0.1; done
 if kill -0 "$child" 2>/dev/null; then echo 'Screensaver did not dismiss after recovery' >&2; exit 1; fi

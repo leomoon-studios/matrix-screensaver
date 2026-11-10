@@ -67,7 +67,6 @@ jobs:
           if [[ '${{ matrix.mode }}' == wayland ]]; then
             test -n "${WAYLAND_DISPLAY:-}" || { echo 'Wayland session missing' >&2; exit 1; }
             command -v hyprctl
-            command -v wtype
           else
             test "${XDG_SESSION_TYPE:-}" = x11 || { echo 'Native Xorg session missing' >&2; exit 1; }
             test -z "${WAYLAND_DISPLAY:-}" || { echo 'Xwayland is not a native Xorg session' >&2; exit 1; }
