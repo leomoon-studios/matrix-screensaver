@@ -39,12 +39,46 @@ impl Quality {
                 .parse()
                 .map_err(|_| "MATRIX_RENDER_SCALE must be 0.25–1".to_owned())?;
         }
-        if !(1..=60).contains(&quality.fps) || !(0.25..=1.0).contains(&quality.render_scale) {
-            return Err(
-                "MATRIX_FPS must be 1–60 and MATRIX_RENDER_SCALE must be 0.25–1".to_owned(),
-            );
-        }
+        quality.validate()?;
         Ok(quality)
+    }
+
+    fn with_arguments(mut self, args: impl IntoIterator<Item = String>) -> Result<Self, String> {
+        let mut args = args.into_iter();
+        while let Some(argument) = args.next() {
+            let (flag, inline_value) = argument
+                .split_once('=')
+                .map_or((argument.as_str(), None), |(flag, value)| {
+                    (flag, Some(value))
+                });
+            match flag {
+                "--fps" => {
+                    let value = inline_value
+                        .map(str::to_owned)
+                        .or_else(|| args.next())
+                        .ok_or("--fps needs a value from 1 to 60")?;
+                    self.fps = value.parse().map_err(|_| "--fps must be 1–60")?;
+                }
+                "--render-scale" => {
+                    let value = inline_value
+                        .map(str::to_owned)
+                        .or_else(|| args.next())
+                        .ok_or("--render-scale needs a value from 0.25 to 1")?;
+                    self.render_scale =
+                        value.parse().map_err(|_| "--render-scale must be 0.25–1")?;
+                }
+                _ => return Err(format!("unknown argument: {argument}")),
+            }
+        }
+        self.validate()?;
+        Ok(self)
+    }
+
+    fn validate(self) -> Result<(), String> {
+        if !(1..=60).contains(&self.fps) || !(0.25..=1.0).contains(&self.render_scale) {
+            return Err("FPS must be 1–60 and render scale must be 0.25–1".to_owned());
+        }
+        Ok(())
     }
 
     fn render_size(self, width: u32, height: u32) -> (u32, u32) {
@@ -60,11 +94,30 @@ impl Quality {
 }
 
 fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        println!(
+            "Usage: matrix-screensaver [--fps 1..60] [--render-scale 0.25..1]\n\nDefaults: --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
+        );
+        return;
+    }
+    let quality =
+        match Quality::from_environment().and_then(|quality| quality.with_arguments(arguments)) {
+            Ok(quality) => quality,
+            Err(error) => {
+                eprintln!("matrix-screensaver: {error}. Run --help for usage.");
+                std::process::exit(2);
+            }
+        };
     let event_loop = EventLoop::new().expect("failed to create the window event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut app = App {
         initial_size: initial_size(),
+        quality,
         renderer: None,
     };
     event_loop.run_app(&mut app).expect("event loop error");
@@ -85,6 +138,7 @@ fn initial_size() -> PhysicalSize<u32> {
 
 struct App {
     initial_size: PhysicalSize<u32>,
+    quality: Quality,
     renderer: Option<Renderer>,
 }
 
@@ -105,7 +159,7 @@ impl ApplicationHandler for App {
                 .expect("failed to create the Matrix window"),
         );
 
-        match pollster::block_on(Renderer::new(window)) {
+        match pollster::block_on(Renderer::new(window, self.quality)) {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => {
                 eprintln!("Matrix Screensaver could not initialize its GPU renderer: {error}");
@@ -172,8 +226,7 @@ struct Renderer {
 }
 
 impl Renderer {
-    async fn new(window: Arc<Window>) -> Result<Self, String> {
-        let quality = Quality::from_environment()?;
+    async fn new(window: Arc<Window>, quality: Quality) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window.clone())
@@ -542,6 +595,30 @@ fn next_frame_deadline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_line_quality_overrides_defaults_and_rejects_bad_values() {
+        let defaults = Quality {
+            fps: 30,
+            render_scale: 0.5,
+        };
+        let quality = defaults
+            .with_arguments(["--fps", "60", "--render-scale=0.75"].map(str::to_owned))
+            .unwrap();
+        assert_eq!(quality.fps, 60);
+        assert_eq!(quality.render_scale, 0.75);
+        assert!(
+            defaults
+                .with_arguments(["--fps", "0"].map(str::to_owned))
+                .is_err()
+        );
+        assert!(
+            defaults
+                .with_arguments(["--render-scale", "NaN"].map(str::to_owned))
+                .is_err()
+        );
+        assert!(defaults.with_arguments(["--unknown".to_owned()]).is_err());
+    }
 
     #[test]
     fn frame_pacer_holds_a_60_hz_deadline_after_slow_frames() {
