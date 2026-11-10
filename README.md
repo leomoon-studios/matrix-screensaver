@@ -34,6 +34,8 @@ That preset renders at 50% scale and targets 30 FPS. Override either setting wit
 
 For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver`. It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 
+For two connected Hyprland monitors, run `python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60`. It starts one instance per monitor and measures both simultaneously. Add `--low-power` to check the 30 FPS preset.
+
 ## Checks
 
 ```bash

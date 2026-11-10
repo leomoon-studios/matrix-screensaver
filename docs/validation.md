@@ -50,3 +50,25 @@ python scripts/benchmark.py target/release/matrix-screensaver --seconds 60 --siz
 python scripts/benchmark.py target/release/matrix-screensaver --seconds 60 --size 1280x720
 WGPU_BACKEND=vulkan VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json MATRIX_LOW_POWER=1 MATRIX_BENCHMARK=1 timeout 35s target/release/matrix-screensaver
 ```
+
+## Two-monitor performance check
+
+With two Dell S2721QS displays connected at 3840 × 2160, 59.997 Hz and scale 1.6, two release-build instances were run simultaneously, one visible on each monitor. DP-2's tiled window was 2376 × 1300 logical pixels (about 3802 × 2080 physical); DP-1's was 2376 × 1272 (about 3802 × 2035). The application currently creates one window per instance, so this measures two instances rather than one process spanning displays. `scripts/benchmark_dual.py` focuses each monitor for launch, verifies the windows are on different monitors, samples 10 seconds idle and 60 seconds running, then restores the original focus. The default run was repeated.
+
+| Both screens active | Default, 60 FPS (two runs) | Low power, 30 FPS (one run) |
+| --- | ---: | ---: |
+| Combined process GPU memory | 524 MiB | 524 MiB |
+| Combined resident RAM | 309.7–310.0 MiB | 309.9 MiB |
+| Combined process CPU, run mean | 4.8% of one core | 3.6% of one core |
+| NVIDIA GPU utilization, run mean | 39.2–39.4% | 37.8% |
+| Board power, idle mean | 22.1 W | 24.0 W |
+| Board power, running mean | 52.7–53.0 W | 35.8 W |
+| Per-window measured frame rate | 59.9–60.1 FPS | 30.0–30.1 FPS |
+| Per-window 95th percentile submission interval | 16.74–16.90 ms | 33.46–33.55 ms |
+
+The low-power preset saved roughly 17 W of measured running board power in this session. The two-instance GPU allocation is about twice the one-window 260–264 MiB allocation, as expected. Total GPU memory and utilization include changing desktop activity: in the two default runs, the idle total was about 4710 MiB and the running total about 5300 MiB, while idle GPU utilization fluctuated widely. Process GPU allocation, frame rate, and the repeated board-power readings were steadier. This check does not show that launching one instance automatically covers both monitors.
+
+```bash
+python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60
+python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60 --low-power
+```
