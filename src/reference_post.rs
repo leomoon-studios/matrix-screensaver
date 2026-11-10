@@ -575,4 +575,87 @@ mod tests {
         );
         assert_eq!(palette, final_pixels);
     }
+
+    /// Run with MATRIX_CAPTURE_SIZE=1280x720, MATRIX_CAPTURE_FRAME=121, and
+    /// MATRIX_CAPTURE_FILE=/tmp/native.png to make a deterministic comparison.
+    #[test]
+    #[ignore]
+    fn capture_native_reference_frame() {
+        let size = std::env::var("MATRIX_CAPTURE_SIZE").unwrap();
+        let (width, height) = size.split_once('x').unwrap();
+        let (width, height): (u32, u32) = (width.parse().unwrap(), height.parse().unwrap());
+        let frames: i32 = std::env::var("MATRIX_CAPTURE_FRAME")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let file = std::env::var("MATRIX_CAPTURE_FILE").unwrap();
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            apply_limit_buckets: false,
+        }))
+        .unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Native comparison capture"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .unwrap();
+        let resources =
+            ReferenceResources::new(&device, &queue, crate::MATRIXCODE_MSDF, width, height)
+                .unwrap();
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let post = ReferencePost::new(
+            &device,
+            width,
+            height,
+            format,
+            &resources.time_buffer,
+            resources.primary_view(),
+            resources.high_pass_view(),
+        );
+        let output = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Native comparison output"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = output.create_view(&Default::default());
+        for frame in 0..frames {
+            queue.write_buffer(
+                &resources.time_buffer,
+                0,
+                bytemuck::bytes_of(&crate::reference_layout::ReferenceTime {
+                    seconds: frame as f32 / 60.0,
+                    frames: frame,
+                    _padding: [0; 2],
+                }),
+            );
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Native comparison frame"),
+            });
+            resources.encode_simulation(&mut encoder);
+            if frame == frames - 1 {
+                resources.encode_render(&mut encoder);
+                post.encode(&mut encoder, &view);
+            }
+            queue.submit([encoder.finish()]);
+        }
+        let pixels = read_texture(&device, &queue, &output, width, height);
+        image::save_buffer(file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+        assert!(pixels.chunks_exact(4).any(|pixel| pixel[1] > 0));
+    }
 }

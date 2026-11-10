@@ -110,6 +110,7 @@ struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     started_at: Instant,
+    next_frame_at: Instant,
 }
 
 impl Renderer {
@@ -207,6 +208,7 @@ impl Renderer {
             queue,
             config,
             started_at: Instant::now(),
+            next_frame_at: Instant::now(),
         })
     }
 
@@ -283,6 +285,55 @@ impl Renderer {
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
         self.reference_frame = self.reference_frame.wrapping_add(1);
-        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
+        let now = Instant::now();
+        self.next_frame_at = next_frame_deadline(self.next_frame_at, now);
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_at));
+    }
+}
+
+fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
+    let mut deadline = previous + FRAME_TIME;
+    while deadline <= now {
+        deadline += FRAME_TIME;
+    }
+    deadline
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_pacer_holds_a_60_hz_deadline_after_slow_frames() {
+        let start = Instant::now();
+        assert_eq!(next_frame_deadline(start, start), start + FRAME_TIME);
+        assert_eq!(
+            next_frame_deadline(start, start + FRAME_TIME + FRAME_TIME / 2),
+            start + FRAME_TIME * 2
+        );
+    }
+
+    #[test]
+    fn copied_gpu_shaders_match_the_local_reference() {
+        assert_eq!(
+            include_str!("shaders/reference-rain.wgsl"),
+            include_str!("../reference/matrix/shaders/wgsl/rainPass.wgsl")
+        );
+        assert_eq!(
+            include_str!("shaders/reference-bloom-blur.wgsl"),
+            include_str!("../reference/matrix/shaders/wgsl/bloomBlur.wgsl")
+        );
+        assert_eq!(
+            include_str!("shaders/reference-bloom-combine.wgsl"),
+            include_str!("../reference/matrix/shaders/wgsl/bloomCombine.wgsl")
+        );
+        assert_eq!(
+            include_str!("shaders/reference-palette.wgsl"),
+            include_str!("../reference/matrix/shaders/wgsl/palettePass.wgsl")
+        );
+        assert_eq!(
+            include_str!("shaders/reference-end.wgsl"),
+            include_str!("../reference/matrix/shaders/wgsl/endPass.wgsl")
+        );
     }
 }

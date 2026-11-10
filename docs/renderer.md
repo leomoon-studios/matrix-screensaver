@@ -15,6 +15,18 @@ The native window runs the copied WebGPU `version=3d` pipeline in this order: `c
 
 The rain pass uses 6,400 quads, or 38,400 vertices. Each frame dispatches the intro pass in 3 × 1 workgroups and the main pass in 3 × 80 workgroups, then draws those quads. The event loop schedules frames about 16.67 ms apart. `MATRIX_WINDOW_SIZE=WIDTHxHEIGHT` sets the initial window size; resizing updates the camera and render targets.
 
+## Comparison capture
+
+The ignored `capture_native_reference_frame` test creates reproducible native PNGs without a visible window. For example:
+
+```bash
+MATRIX_CAPTURE_SIZE=1280x720 MATRIX_CAPTURE_FRAME=121 \
+  MATRIX_CAPTURE_FILE=/tmp/native-1280x720-f121.png \
+  cargo test capture_native_reference_frame -- --ignored
+```
+
+The test steps the reference pipeline at 60 Hz, so frame 121 is the two-second frame. It is used alongside the locally hosted reference source at the same size and timestamp. Chromium's headless WebGPU path did not produce drawable pixels on the target driver, while its WebGL fallback uses a legacy state texture path and is retained only as a qualitative motion reference.
+
 ## GPU resources
 
 | Resource | Size and format |
