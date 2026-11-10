@@ -26,6 +26,10 @@ struct VertexOut {
 
 const GRID: u32 = 80u;
 
+fn random_float(uv: vec2<f32>) -> f32 {
+    return fract(sin(dot(uv, vec2<f32>(12.9898, 78.233)) % 3.14159265359) * 43758.5453);
+}
+
 fn corner(vertex: u32) -> vec2<f32> {
     let corners = array<vec2<f32>, 6>(
         vec2<f32>(-0.5, -0.5), vec2<f32>(0.5, -0.5), vec2<f32>(0.5, 0.5),
@@ -41,13 +45,16 @@ fn vertex_main(@builtin(vertex_index) vertex: u32) -> VertexOut {
     let row = cell_index / GRID;
     let cell = cells.values[cell_index];
     let depth = cell.rain.w;
-    // Perspective motion and scale follow the version=3d forwardSpeed=0.25 model.
-    let perspective = mix(0.22, 1.8, depth * depth);
+    // Match the reference's 90° camera after its z=-1 translation. In clip
+    // space this is scale = 1/(1-depth), with a small near-plane guard.
+    let perspective = 1.0 / max(0.035, 1.0 - depth);
     let base = vec2<f32>(
         (f32(column) + 0.5) / f32(GRID) * 2.0 - 1.0,
         (f32(row) + 0.5) / f32(GRID) * 2.0 - 1.0,
     );
-    let pos = (base + corner(vertex) / f32(GRID)) * perspective;
+    var position = base + corner(vertex) / f32(GRID);
+    position.y += random_float(vec2<f32>(f32(column), 1.0)) / f32(GRID);
+    let pos = position * perspective;
     let glyph_x = i32(cell.symbol.x) % 8;
     let glyph_y = 7 - i32(cell.symbol.x) / 8;
     let local = corner(vertex) + vec2<f32>(0.5);
