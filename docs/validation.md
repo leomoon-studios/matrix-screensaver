@@ -72,3 +72,19 @@ The low-power preset saved roughly 17 W of measured running board power in this 
 python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60
 python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60 --low-power
 ```
+
+## Single-monitor comparison with Omarchy effects
+
+With both monitors connected, only one window was animated on DP-2 for each run. Hyprland gave every window 2376 × 1272 logical pixels, approximately 3802 × 2035 physical pixels at scale 1.6. Each run sampled 10 seconds idle and 60 seconds running on the RTX 3060. The native binary was built with `cargo build --release`. Omarchy's installed `omarchy-screensaver` invokes `ttfx` at a configured 120 FPS with the user's branding text and random effects. To compare specific effects, each was repeated inside one Foot terminal using Omarchy's packaged `screensaver.ini` and the same `ttfx` canvas, input, and frame-rate options. This bypassed the normal launcher, which opens a window on every monitor. The five effects were chosen for their full-canvas or particle animation; they are not an exhaustive ranking of all effects. Actual `ttfx` frame rate was not measured.
+
+| One window, 60-second run | GPU board power above its idle mean | Process-tree CPU, % of one core | Resident RAM | GPU allocation |
+| --- | ---: | ---: | ---: | ---: |
+| Native Matrix, 60 FPS | 17.7 W | 2.8% | 154.8 MiB | 260 MiB process |
+| Native Matrix low power, 30 FPS (two runs) | 3.2–4.1 W | 2.2–2.5% | 154.8–154.9 MiB | 260 MiB process |
+| Omarchy `ttfx matrix` | 23.0 W | 103.3% | 68.6 MiB | Not attributed by `nvidia-smi` |
+| Omarchy `ttfx fireworks` | 22.0 W | 90.4% | 66.2 MiB | Not attributed by `nvidia-smi` |
+| Omarchy `ttfx smoke` | 22.5 W | 103.7% | 67.1 MiB | Not attributed by `nvidia-smi` |
+| Omarchy `ttfx thunderstorm` | 21.4 W | 89.9% | 67.0 MiB | Not attributed by `nvidia-smi` |
+| Omarchy `ttfx blackhole` | 22.9 W | 91.8% | 66.2 MiB | Not attributed by `nvidia-smi` |
+
+The terminal process tree includes Foot, the shell loop, and `ttfx`. `nvidia-smi` listed the native application's GPU memory directly but did not list Foot's allocation, so its GPU-memory column is not directly comparable; total GPU memory varied with other desktop activity. NVIDIA GPU-utilization readings also varied widely at low board power, so board-power delta is the more useful GPU-load comparison here. The native 30 FPS preset used much less CPU and measured board power than the selected Omarchy effects, while retaining about 2.3 times their resident RAM. The native 60 FPS setting also used less CPU and about 4–5 W less incremental board power. These effects have different visuals and their configured frame rates differ.
