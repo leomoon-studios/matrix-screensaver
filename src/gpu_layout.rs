@@ -77,7 +77,7 @@ impl RainConfig {
         let mut config = Self::matrix_3d();
         config.fall_speed = 0.3;
         config.ripple[0] = 0.75;
-        config.render[2] = -0.5;
+        config.render[2] = -0.65;
         config.render[3] = 1.1;
         config.booleans[0] = 0; // Flat, single-quad renderer.
         config.booleans[4] = 0; // Enable the staggered intro.

@@ -1,6 +1,6 @@
 # Matrix Screensaver
 
-A native Rust Matrix animation with modern 3D and classic 2D rain. It opens a resizable GPU window and renders rain, bloom, and color entirely on the GPU. Screensaver and idle integration are still planned.
+A native Rust Matrix animation with modern 3D and classic 2D rain. It renders rain, bloom, and color entirely on the GPU. It runs in a resizable window by default or opens full-screen windows with `--screensaver`.
 
 ## Build and run
 
@@ -31,6 +31,8 @@ The default `--type modern` renders the 3D effect internally at 50% of the windo
 ```
 
 Build first with `cargo build --release`. Select the effect with `--type modern|classic`; override either quality setting with `--render-scale 0.25..1` and `--fps 1..60`; for example, `./target/release/matrix-screensaver --fps 60 --render-scale 1` uses full internal resolution. Run `./target/release/matrix-screensaver --help` for usage. The `MATRIX_RENDER_SCALE` and `MATRIX_FPS` environment variables remain supported for existing scripts; command-line values take precedence. Integrated graphics are supported when the driver provides a compatible adapter. The app exits with a clear error on a CPU software adapter because that path has not met the screensaver's low-power target.
+
+To try the full-screen mode, run `./target/release/matrix-screensaver --screensaver --type modern` (or `--type classic`). It creates one window per active monitor and exits on a key press, mouse click, scroll, touch, or pointer movement past a small threshold. A session idle launcher should also stop the process on resume or lock; installation of that launcher is planned in Task 5. The binary does not lock the session. Temporary-output add and removal passed on the tested Hyprland session; physical unplug and suspend still need validation. See [Step 4 validation](docs/validation.md#step-4-linux-screensaver-mode).
 
 For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver --type classic` (or `--type modern`). It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 

@@ -1,11 +1,15 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowAttributes, WindowId},
+    dpi::{PhysicalPosition, PhysicalSize},
+    event::{ElementState, MouseScrollDelta, TouchPhase, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle},
+    monitor::MonitorHandle,
+    window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
 
 mod gpu_layout;
@@ -16,6 +20,9 @@ mod rain;
 const MATRIXCODE_MSDF: &[u8] = include_bytes!("../assets/matrixcode_msdf.png");
 const DEFAULT_RENDER_SCALE: f32 = 0.5;
 const DEFAULT_FPS: u32 = 30;
+const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const POINTER_STARTUP_GRACE: Duration = Duration::from_millis(300);
+const POINTER_DISMISS_DISTANCE: f64 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RainType {
@@ -28,6 +35,7 @@ struct Quality {
     fps: u32,
     render_scale: f32,
     rain_type: RainType,
+    screensaver: bool,
 }
 
 impl Quality {
@@ -36,6 +44,7 @@ impl Quality {
             fps: DEFAULT_FPS,
             render_scale: DEFAULT_RENDER_SCALE,
             rain_type: RainType::Modern,
+            screensaver: false,
         };
         if let Ok(value) = std::env::var("MATRIX_FPS") {
             quality.fps = value
@@ -60,6 +69,7 @@ impl Quality {
                     (flag, Some(value))
                 });
             match flag {
+                "--screensaver" if inline_value.is_none() => self.screensaver = true,
                 "--type" => {
                     let value = inline_value
                         .map(str::to_owned)
@@ -119,7 +129,7 @@ fn main() {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: matrix-screensaver [--type modern|classic] [--fps 1..60] [--render-scale 0.25..1]\n\nDefaults: --type modern --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
+            "Usage: matrix-screensaver [--screensaver] [--type modern|classic] [--fps 1..60] [--render-scale 0.25..1]\n\n--screensaver opens full-screen on each monitor and exits on input.\nDefaults: --type modern --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
         );
         return;
     }
@@ -137,9 +147,14 @@ fn main() {
     let mut app = App {
         initial_size: initial_size(),
         quality,
-        renderer: None,
+        windows: Vec::new(),
+        next_monitor_poll: Instant::now(),
+        failed: false,
     };
     event_loop.run_app(&mut app).expect("event loop error");
+    if app.failed {
+        std::process::exit(1);
+    }
 }
 
 fn initial_size() -> PhysicalSize<u32> {
@@ -158,32 +173,17 @@ fn initial_size() -> PhysicalSize<u32> {
 struct App {
     initial_size: PhysicalSize<u32>,
     quality: Quality,
-    renderer: Option<Renderer>,
+    windows: Vec<ScreenWindow>,
+    next_monitor_poll: Instant,
+    failed: bool,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.renderer.is_some() {
-            return;
-        }
-
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    WindowAttributes::default()
-                        .with_title("Matrix Screensaver")
-                        .with_inner_size(self.initial_size)
-                        .with_resizable(true),
-                )
-                .expect("failed to create the Matrix window"),
-        );
-
-        match pollster::block_on(Renderer::new(window, self.quality)) {
-            Ok(renderer) => self.renderer = Some(renderer),
-            Err(error) => {
-                eprintln!("Matrix Screensaver could not initialize its GPU renderer: {error}");
-                event_loop.exit();
-            }
+        if self.quality.screensaver {
+            self.sync_monitors(event_loop);
+        } else if self.windows.is_empty() {
+            self.create_window(event_loop, None);
         }
     }
 
@@ -193,29 +193,240 @@ impl ApplicationHandler for App {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        let Some(renderer) = self.renderer.as_mut() else {
+        let Some(index) = self
+            .windows
+            .iter()
+            .position(|entry| entry.renderer.window.id() == window_id)
+        else {
             return;
         };
-        if renderer.window.id() != window_id {
+        let scale_factor = self.windows[index].renderer.window.scale_factor();
+        if self.quality.screensaver
+            && self.windows[index]
+                .dismissal
+                .handles(&event, Instant::now(), scale_factor)
+        {
+            event_loop.exit();
             return;
         }
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => renderer.resize(size),
-            WindowEvent::Occluded(occluded) => renderer.set_occluded(occluded),
-            WindowEvent::RedrawRequested => renderer.render(event_loop),
+            WindowEvent::Destroyed => {
+                self.windows.remove(index);
+                if !self.quality.screensaver {
+                    event_loop.exit();
+                }
+            }
+            WindowEvent::Resized(size) => self.windows[index].renderer.resize(size),
+            WindowEvent::ScaleFactorChanged { .. } => {
+                let size = self.windows[index].renderer.window.inner_size();
+                self.windows[index].renderer.resize(size);
+            }
+            WindowEvent::Occluded(occluded) => self.windows[index].renderer.set_occluded(occluded),
+            WindowEvent::RedrawRequested => {
+                if self.quality.screensaver {
+                    let attached = self.windows[index].monitor.as_ref().unwrap();
+                    if !event_loop
+                        .available_monitors()
+                        .any(|active| active == *attached)
+                    {
+                        // Do not acquire a Vulkan swapchain image after its
+                        // Wayland output disappears. Some drivers crash first.
+                        self.sync_monitors(event_loop);
+                        return;
+                    }
+                }
+                self.windows[index].renderer.render(event_loop);
+            }
             _ => {}
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(renderer) = &self.renderer
-            && !renderer.occluded
-            && Instant::now() >= renderer.next_frame_at
-        {
-            renderer.window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        if self.quality.screensaver && now >= self.next_monitor_poll {
+            self.sync_monitors(event_loop);
+            self.next_monitor_poll = now + MONITOR_POLL_INTERVAL;
         }
+        let mut next_wake = self.quality.screensaver.then_some(self.next_monitor_poll);
+        for entry in &self.windows {
+            let renderer = &entry.renderer;
+            if renderer.occluded {
+                continue;
+            }
+            if now >= renderer.next_frame_at {
+                renderer.window.request_redraw();
+            }
+            next_wake = Some(next_wake.map_or(renderer.next_frame_at, |wake| {
+                wake.min(renderer.next_frame_at)
+            }));
+        }
+        if let Some(deadline) = next_wake {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        }
+    }
+}
+
+struct ScreenWindow {
+    monitor: Option<MonitorHandle>,
+    renderer: Renderer,
+    dismissal: Dismissal,
+}
+
+impl App {
+    fn sync_monitors(&mut self, event_loop: &ActiveEventLoop) {
+        if self.failed {
+            return;
+        }
+        let monitors: Vec<_> = event_loop.available_monitors().collect();
+        if monitors.is_empty() {
+            // A display may disappear during DPMS or suspend. Release its GPU
+            // resources and wait for the compositor to advertise it again.
+            self.windows.clear();
+            return;
+        }
+        self.windows.retain(|entry| {
+            entry
+                .monitor
+                .as_ref()
+                .is_some_and(|monitor| monitors.contains(monitor))
+        });
+        for monitor in monitors {
+            if !self
+                .windows
+                .iter()
+                .any(|entry| entry.monitor.as_ref() == Some(&monitor))
+            {
+                self.create_window(event_loop, Some(monitor));
+                if self.failed {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn create_window(&mut self, event_loop: &ActiveEventLoop, monitor: Option<MonitorHandle>) {
+        let mut attrs = WindowAttributes::default().with_title("Matrix Screensaver");
+        if let Some(monitor) = &monitor {
+            attrs = attrs
+                .with_fullscreen(Some(Fullscreen::Borderless(Some(monitor.clone()))))
+                .with_decorations(false)
+                .with_resizable(false);
+        } else {
+            attrs = attrs
+                .with_inner_size(self.initial_size)
+                .with_resizable(true);
+        }
+        let window = match event_loop.create_window(attrs) {
+            Ok(window) => Arc::new(window),
+            Err(error) => {
+                eprintln!("Matrix Screensaver could not create a window: {error}");
+                self.failed = true;
+                event_loop.exit();
+                return;
+            }
+        };
+        if self.quality.screensaver {
+            window.set_cursor_visible(false);
+        }
+        match pollster::block_on(Renderer::new(
+            window,
+            self.quality,
+            event_loop.owned_display_handle(),
+            self.windows.first().map(|entry| &entry.renderer),
+        )) {
+            Ok(renderer) => self.windows.push(ScreenWindow {
+                monitor,
+                renderer,
+                dismissal: Dismissal::new(Instant::now()),
+            }),
+            Err(error) => {
+                eprintln!("Matrix Screensaver could not initialize its GPU renderer: {error}");
+                self.failed = true;
+                event_loop.exit();
+            }
+        }
+    }
+}
+
+struct Dismissal {
+    started_at: Instant,
+    pointer_origin: Option<PhysicalPosition<f64>>,
+}
+
+enum DismissalInput {
+    Key { pressed: bool, synthetic: bool },
+    MouseButton { pressed: bool },
+    Scroll { moved: bool },
+    Touch { started: bool },
+    Pointer(PhysicalPosition<f64>),
+}
+
+impl Dismissal {
+    fn new(started_at: Instant) -> Self {
+        Self {
+            started_at,
+            pointer_origin: None,
+        }
+    }
+
+    fn handles(&mut self, event: &WindowEvent, now: Instant, scale_factor: f64) -> bool {
+        let input = match event {
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => DismissalInput::Key {
+                pressed: event.state == ElementState::Pressed,
+                synthetic: *is_synthetic,
+            },
+            WindowEvent::MouseInput { state, .. } => DismissalInput::MouseButton {
+                pressed: *state == ElementState::Pressed,
+            },
+            WindowEvent::MouseWheel { delta, .. } => DismissalInput::Scroll {
+                moved: match delta {
+                    MouseScrollDelta::LineDelta(x, y) => *x != 0.0 || *y != 0.0,
+                    MouseScrollDelta::PixelDelta(position) => {
+                        position.x != 0.0 || position.y != 0.0
+                    }
+                },
+            },
+            WindowEvent::Touch(touch) => DismissalInput::Touch {
+                started: touch.phase == TouchPhase::Started,
+            },
+            WindowEvent::CursorMoved { position, .. } => DismissalInput::Pointer(*position),
+            _ => return false,
+        };
+        self.on_input(input, now, scale_factor)
+    }
+
+    fn on_input(&mut self, input: DismissalInput, now: Instant, scale_factor: f64) -> bool {
+        match input {
+            DismissalInput::Key { pressed, synthetic } => pressed && !synthetic,
+            DismissalInput::MouseButton { pressed } => pressed,
+            DismissalInput::Scroll { moved } => moved,
+            DismissalInput::Touch { started } => started,
+            DismissalInput::Pointer(position) => self.pointer_moved(position, now, scale_factor),
+        }
+    }
+
+    fn pointer_moved(
+        &mut self,
+        position: PhysicalPosition<f64>,
+        now: Instant,
+        scale_factor: f64,
+    ) -> bool {
+        if now.duration_since(self.started_at) < POINTER_STARTUP_GRACE {
+            self.pointer_origin = Some(position);
+            return false;
+        }
+        let Some(origin) = self.pointer_origin else {
+            self.pointer_origin = Some(position);
+            return false;
+        };
+        let distance = (position.x - origin.x).hypot(position.y - origin.y);
+        distance >= POINTER_DISMISS_DISTANCE * scale_factor
     }
 }
 
@@ -224,6 +435,7 @@ struct Renderer {
     post: post::MatrixPost,
     simulation_frame: i32,
     instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -245,20 +457,36 @@ struct Renderer {
 }
 
 impl Renderer {
-    async fn new(window: Arc<Window>, quality: Quality) -> Result<Self, String> {
-        let instance = wgpu::Instance::default();
+    async fn new(
+        window: Arc<Window>,
+        quality: Quality,
+        display: OwnedDisplayHandle,
+        shared: Option<&Renderer>,
+    ) -> Result<Self, String> {
+        let instance = shared.map_or_else(
+            || {
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
+                    Box::new(display),
+                ))
+            },
+            |renderer| renderer.instance.clone(),
+        );
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| format!("could not create a rendering surface: {error}"))?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-            })
-            .await
-            .map_err(|error| format!("no compatible GPU adapter: {error}"))?;
+        let adapter = if let Some(renderer) = shared {
+            renderer.adapter.clone()
+        } else {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                    apply_limit_buckets: false,
+                })
+                .await
+                .map_err(|error| format!("no compatible GPU adapter: {error}"))?
+        };
         if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
             return Err("only a software graphics adapter was found; this GPU renderer would consume substantial CPU time".to_owned());
         }
@@ -266,21 +494,25 @@ impl Renderer {
         let profile_features =
             wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
         let profile_supported = adapter.features().contains(profile_features);
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("Matrix Screensaver device"),
-                required_features: if profile_requested && profile_supported {
-                    profile_features
-                } else {
-                    wgpu::Features::empty()
-                },
-                required_limits: wgpu::Limits::default(),
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-            })
-            .await
-            .map_err(|error| format!("could not create GPU device: {error}"))?;
+        let (device, queue) = if let Some(renderer) = shared {
+            (renderer.device.clone(), renderer.queue.clone())
+        } else {
+            adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("Matrix Screensaver device"),
+                    required_features: if profile_requested && profile_supported {
+                        profile_features
+                    } else {
+                        wgpu::Features::empty()
+                    },
+                    required_limits: wgpu::Limits::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+                .map_err(|error| format!("could not create GPU device: {error}"))?
+        };
 
         let size = window.inner_size();
         let capabilities = surface.get_capabilities(&adapter);
@@ -363,8 +595,9 @@ impl Renderer {
         );
 
         eprintln!(
-            "GPU ready: {} (bundled matrix glyph atlas: {} bytes)",
+            "GPU ready: {} ({:?}; bundled matrix glyph atlas: {} bytes)",
             adapter.get_info().name,
+            adapter.get_info().backend,
             MATRIXCODE_MSDF.len()
         );
 
@@ -373,6 +606,7 @@ impl Renderer {
             post,
             simulation_frame: 0,
             instance,
+            adapter,
             window,
             surface,
             device,
@@ -623,6 +857,7 @@ mod tests {
             fps: 30,
             render_scale: 0.5,
             rain_type: RainType::Modern,
+            screensaver: false,
         };
         let quality = defaults
             .with_arguments(["--fps", "60", "--render-scale=0.75"].map(str::to_owned))
@@ -630,6 +865,17 @@ mod tests {
         assert_eq!(quality.fps, 60);
         assert_eq!(quality.render_scale, 0.75);
         assert_eq!(quality.rain_type, RainType::Modern);
+        assert!(
+            defaults
+                .with_arguments(["--screensaver".to_owned()])
+                .unwrap()
+                .screensaver
+        );
+        assert!(
+            defaults
+                .with_arguments(["--screensaver=true".to_owned()])
+                .is_err()
+        );
         assert_eq!(
             defaults
                 .with_arguments(["--type=classic".to_owned()])
@@ -658,6 +904,7 @@ mod tests {
             fps: 60,
             render_scale: 1.0,
             rain_type: RainType::Modern,
+            screensaver: false,
         }
         .frame_time();
         assert_eq!(
@@ -668,5 +915,70 @@ mod tests {
             next_frame_deadline(start, start + frame_time + frame_time / 2, frame_time),
             start + frame_time * 2
         );
+    }
+
+    #[test]
+    fn screensaver_input_dismisses_after_real_activity() {
+        let start = Instant::now();
+        let mut dismissal = Dismissal::new(start);
+        let pointer = |x, y| DismissalInput::Pointer(PhysicalPosition::new(x, y));
+        assert!(!dismissal.on_input(pointer(100.0, 100.0), start, 1.0));
+        assert!(!dismissal.on_input(
+            pointer(200.0, 200.0),
+            start + Duration::from_millis(200),
+            1.0
+        ));
+        assert!(!dismissal.on_input(
+            pointer(200.0, 200.0),
+            start + Duration::from_millis(350),
+            1.0
+        ));
+        assert!(!dismissal.on_input(
+            pointer(203.0, 200.0),
+            start + Duration::from_millis(360),
+            1.0
+        ));
+        assert!(!dismissal.on_input(
+            pointer(207.0, 200.0),
+            start + Duration::from_millis(370),
+            1.0
+        ));
+        assert!(dismissal.on_input(
+            pointer(208.0, 200.0),
+            start + Duration::from_millis(380),
+            1.0
+        ));
+
+        let mut scaled = Dismissal::new(start);
+        assert!(!scaled.on_input(pointer(0.0, 0.0), start, 2.0));
+        assert!(!scaled.on_input(pointer(12.0, 0.0), start + Duration::from_millis(400), 2.0));
+        assert!(scaled.on_input(pointer(16.0, 0.0), start + Duration::from_millis(410), 2.0));
+
+        for input in [
+            DismissalInput::Key {
+                pressed: true,
+                synthetic: false,
+            },
+            DismissalInput::MouseButton { pressed: true },
+            DismissalInput::Scroll { moved: true },
+            DismissalInput::Touch { started: true },
+        ] {
+            assert!(Dismissal::new(start).on_input(input, start, 1.0));
+        }
+        for input in [
+            DismissalInput::Key {
+                pressed: true,
+                synthetic: true,
+            },
+            DismissalInput::Key {
+                pressed: false,
+                synthetic: false,
+            },
+            DismissalInput::MouseButton { pressed: false },
+            DismissalInput::Scroll { moved: false },
+            DismissalInput::Touch { started: false },
+        ] {
+            assert!(!Dismissal::new(start).on_input(input, start, 1.0));
+        }
     }
 }

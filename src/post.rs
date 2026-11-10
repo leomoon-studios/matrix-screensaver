@@ -6,7 +6,7 @@ use wgpu::util::DeviceExt;
 const LEVELS: usize = 4;
 const BLOOM_SIZE: f32 = 0.4;
 const BLOOM_STRENGTH: f32 = 0.7;
-const CLASSIC_BLOOM_STRENGTH: f32 = 0.55;
+const CLASSIC_BLOOM_STRENGTH: f32 = 0.45;
 
 struct BloomLevel {
     width: u32,
