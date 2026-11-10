@@ -28,12 +28,28 @@ fn main() {
     let event_loop = EventLoop::new().expect("failed to create the window event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut app = App::default();
+    let mut app = App {
+        initial_size: initial_size(),
+        renderer: None,
+    };
     event_loop.run_app(&mut app).expect("event loop error");
 }
 
-#[derive(Default)]
+fn initial_size() -> PhysicalSize<u32> {
+    let Ok(size) = std::env::var("MATRIX_WINDOW_SIZE") else {
+        return PhysicalSize::new(1280, 720);
+    };
+    let Some((width, height)) = size.split_once('x') else {
+        return PhysicalSize::new(1280, 720);
+    };
+    let (Ok(width), Ok(height)) = (width.parse(), height.parse()) else {
+        return PhysicalSize::new(1280, 720);
+    };
+    PhysicalSize::new(width, height)
+}
+
 struct App {
+    initial_size: PhysicalSize<u32>,
     renderer: Option<Renderer>,
 }
 
@@ -48,7 +64,7 @@ impl ApplicationHandler for App {
                 .create_window(
                     WindowAttributes::default()
                         .with_title("Matrix Screensaver")
-                        .with_inner_size(PhysicalSize::new(1280, 720))
+                        .with_inner_size(self.initial_size)
                         .with_resizable(true),
                 )
                 .expect("failed to create the Matrix window"),

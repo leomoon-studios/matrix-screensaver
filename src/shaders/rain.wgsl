@@ -72,10 +72,16 @@ fn median(value: vec3<f32>) -> f32 {
 }
 
 fn palette(brightness: f32) -> vec3<f32> {
-    let low = vec3<f32>(0.0, 0.10, 0.0);
-    let middle = vec3<f32>(0.04, 0.76, 0.02);
-    let high = vec3<f32>(0.70, 1.0, 0.52);
-    return select(mix(low, middle, brightness / 0.7), mix(middle, high, (brightness - 0.7) / 0.1), brightness > 0.7);
+    // Exact RGB conversion of the version=3d HSL palette stops:
+    // 0.0=(.3,.9,0), .2=(.3,.9,.2), .7=(.3,.9,.7), .8=(.3,.9,.8).
+    let black = vec3<f32>(0.0);
+    let low = vec3<f32>(0.092, 0.38, 0.02);
+    let bright = vec3<f32>(0.538, 0.97, 0.43);
+    let white = vec3<f32>(0.692, 0.98, 0.62);
+    if (brightness < 0.2) { return mix(black, low, brightness / 0.2); }
+    if (brightness < 0.7) { return mix(low, bright, (brightness - 0.2) / 0.5); }
+    if (brightness < 0.8) { return mix(bright, white, (brightness - 0.7) / 0.1); }
+    return white;
 }
 
 @fragment
@@ -86,6 +92,7 @@ fn fragment_main(input: VertexOut) -> @location(0) vec4<f32> {
     let tracer = input.cursor * input.brightness;
     let base = palette(input.brightness) * glyph * input.brightness;
     let glow = vec3<f32>(0.05, 0.75, 0.02) * halo * input.brightness * 0.55;
-    let cursor = vec3<f32>(0.62, 1.0, 0.28) * tracer * glyph;
+    // HSL(.242, 1, .73), with the reference cursor intensity of 2.
+    let cursor = min(vec3<f32>(0.756, 1.0, 0.46) * tracer * glyph * 2.0, vec3<f32>(1.0));
     return vec4<f32>(base + glow + cursor, glyph * input.brightness);
 }

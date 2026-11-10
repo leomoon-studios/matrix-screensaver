@@ -16,6 +16,14 @@ The project enables Wayland and X11 backends in `winit`; on Omarchy it will use 
 
 `reference/matrix/assets/matrixcode_msdf.png` is compiled into the executable. Running the binary therefore does not fetch assets or require a browser, network connection, or working-directory-relative asset path.
 
+For visual regression checks, choose a starting window size without changing the renderer:
+
+```bash
+MATRIX_WINDOW_SIZE=1280x720 cargo run
+MATRIX_WINDOW_SIZE=720x1280 cargo run
+MATRIX_WINDOW_SIZE=1024x1024 cargo run
+```
+
 ## Checks
 
 ```bash
