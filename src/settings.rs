@@ -9,11 +9,35 @@ pub enum RainType {
     Classic,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorTheme {
+    Green,
+    Blue,
+    Red,
+    Yellow,
+    Purple,
+    Orange,
+}
+
+impl ColorTheme {
+    pub fn hues(self) -> (f32, f32) {
+        match self {
+            Self::Green => (0.3, 0.242),
+            Self::Blue => (0.6, 0.542),
+            Self::Red => (0.0, 0.942),
+            Self::Yellow => (0.15, 0.092),
+            Self::Purple => (0.78, 0.722),
+            Self::Orange => (0.08, 0.022),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Quality {
     pub fps: u32,
     pub render_scale: f32,
     pub rain_type: RainType,
+    pub color: ColorTheme,
     pub screensaver: bool,
 }
 
@@ -23,6 +47,7 @@ impl Default for Quality {
             fps: DEFAULT_FPS,
             render_scale: DEFAULT_RENDER_SCALE,
             rain_type: RainType::Modern,
+            color: ColorTheme::Green,
             screensaver: false,
         }
     }
@@ -67,6 +92,25 @@ impl Quality {
                         "modern" => RainType::Modern,
                         "classic" => RainType::Classic,
                         _ => return Err(format!("--type must be modern or classic, got {value}")),
+                    };
+                }
+                "--color" => {
+                    let value = inline_value
+                        .map(str::to_owned)
+                        .or_else(|| args.next())
+                        .ok_or("--color needs green, blue, red, yellow, purple, or orange")?;
+                    self.color = match value.as_str() {
+                        "green" => ColorTheme::Green,
+                        "blue" => ColorTheme::Blue,
+                        "red" => ColorTheme::Red,
+                        "yellow" => ColorTheme::Yellow,
+                        "purple" => ColorTheme::Purple,
+                        "orange" => ColorTheme::Orange,
+                        _ => {
+                            return Err(format!(
+                                "--color must be green, blue, red, yellow, purple, or orange, got {value}"
+                            ));
+                        }
                     };
                 }
                 "--fps" => {

@@ -12,7 +12,9 @@ The app embeds its WGSL shaders from `src/shaders/` and its 512 × 512 MSDF glyp
 | Intro | Starts with active rain | Starts black; columns reveal from top in a staggered sequence |
 | Bloom strength | 0.7 | 0.45 |
 
-Both modes use the same 57-symbol glyph atlas, 80 × 80 cell state, green palette, four bloom levels, and bright isolated cursor color. Classic's lower bloom strength is an intentional visual adjustment. The default power setting is 30 FPS at 50% internal resolution. `--fps` and `--render-scale` adjust those values without changing the mode.
+Both modes use the same 57-symbol glyph atlas, 80 × 80 cell state, selected palette, four bloom levels, and bright isolated cursor color. Classic's lower bloom strength is an intentional visual adjustment. The default power setting is 30 FPS at 50% internal resolution. `--fps` and `--render-scale` adjust those values without changing the mode.
+
+`--color` rotates the 512-color palette and bright cursor hue together. Available values are `green` (default), `blue`, `red`, `yellow`, `purple`, and `orange`; geometry, timing, and bloom strength are unchanged.
 
 The palette's per-pixel dither strength follows `--render-scale`: it is 0.05 at scale 1, 0.025 at the default scale 0.5, and 0.0125 at scale 0.25. Lower internal resolutions therefore show gentler speckles instead of enlarging equally strong noise. This changes only a uniform set when the renderer starts; the shader performs the same work per pixel.
 

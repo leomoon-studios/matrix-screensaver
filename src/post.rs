@@ -1,6 +1,6 @@
 //! GPU bloom, palette, and presentation passes.
 
-use crate::RainType;
+use crate::{ColorTheme, RainType};
 use wgpu::util::DeviceExt;
 
 const LEVELS: usize = 4;
@@ -55,6 +55,7 @@ impl MatrixPost {
         primary: &wgpu::TextureView,
         high_pass: &wgpu::TextureView,
         rain_type: RainType,
+        color: ColorTheme,
         render_scale: f32,
     ) -> Self {
         let shader = |label: &'static str, source: &'static str| {
@@ -133,11 +134,11 @@ impl MatrixPost {
         );
         let palette_config = uniform(
             "Matrix palette settings",
-            bytemuck::cast_slice(&palette_config_data(render_scale)),
+            bytemuck::cast_slice(&palette_config_data(color, render_scale)),
         );
         let palette_colors = uniform(
             "Matrix 512-color palette",
-            bytemuck::cast_slice(&palette_data()),
+            bytemuck::cast_slice(&palette_data(color)),
         );
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Matrix post linear sampler"),
@@ -404,7 +405,8 @@ fn hsl(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
     [channel(0.0), channel(8.0), channel(4.0)]
 }
 
-fn palette_data() -> [f32; 512 * 4] {
+fn palette_data(color: ColorTheme) -> [f32; 512 * 4] {
+    let (hue, _) = color.hues();
     let stops = [(0.0, 0.0), (0.2, 0.2), (0.7, 0.7), (0.8, 0.8)];
     let mut output = [0.0; 512 * 4];
     for index in 0..512 {
@@ -422,8 +424,8 @@ fn palette_data() -> [f32; 512 * 4] {
         } else {
             0.0
         };
-        let a = hsl(0.3, 0.9, left_light);
-        let b = hsl(0.3, 0.9, right_light);
+        let a = hsl(hue, 0.9, left_light);
+        let b = hsl(hue, 0.9, right_light);
         for channel in 0..3 {
             output[index * 4 + channel] = a[channel] * (1.0 - ratio) + b[channel] * ratio;
         }
@@ -431,8 +433,9 @@ fn palette_data() -> [f32; 512 * 4] {
     output
 }
 
-fn palette_config_data(render_scale: f32) -> [f32; 20] {
-    let cursor = hsl(0.242, 1.0, 0.73);
+fn palette_config_data(color: ColorTheme, render_scale: f32) -> [f32; 20] {
+    let (_, cursor_hue) = color.hues();
+    let cursor = hsl(cursor_hue, 1.0, 0.73);
     let mut data = [0.0; 20];
     // Each internal pixel covers more of the screen at lower render scales.
     // Soften the per-pixel dither without changing the render resolution.
@@ -509,7 +512,7 @@ mod tests {
 
     #[test]
     fn palette_matches_configured_stops() {
-        let colors = palette_data();
+        let colors = palette_data(ColorTheme::Green);
         assert_eq!(&colors[0..3], &[0.0; 3]);
         for (index, lightness) in [(102, 0.2), (357, 0.7), (408, 0.8), (511, 0.8)] {
             let expected = hsl(0.3, 0.9, lightness);
@@ -518,6 +521,27 @@ mod tests {
             }
         }
         assert_eq!(colors[511 * 4 + 3], 0.0);
+    }
+
+    #[test]
+    fn color_palettes_keep_black_and_distinct_hues() {
+        let green = palette_data(ColorTheme::Green);
+        let colors = [
+            ColorTheme::Blue,
+            ColorTheme::Red,
+            ColorTheme::Yellow,
+            ColorTheme::Purple,
+            ColorTheme::Orange,
+        ];
+        for color in colors {
+            let palette = palette_data(color);
+            assert_eq!(&palette[0..3], &[0.0; 3]);
+            assert_ne!(&palette[408 * 4..408 * 4 + 3], &green[408 * 4..408 * 4 + 3]);
+            assert_ne!(
+                &palette_config_data(color, 0.5)[8..11],
+                &palette_config_data(ColorTheme::Green, 0.5)[8..11]
+            );
+        }
     }
 
     #[test]
@@ -552,6 +576,7 @@ mod tests {
             resources.primary_view(),
             resources.high_pass_view(),
             RainType::Modern,
+            ColorTheme::Blue,
             0.5,
         );
         let final_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -587,7 +612,7 @@ mod tests {
         assert!(
             palette
                 .chunks_exact(4)
-                .any(|pixel| pixel[1] > pixel[0] && pixel[1] > 0)
+                .any(|pixel| pixel[2] > pixel[0] && pixel[2] > pixel[1])
         );
         assert!(
             palette
@@ -640,6 +665,7 @@ mod tests {
             resources.primary_view(),
             resources.high_pass_view(),
             RainType::Modern,
+            ColorTheme::Green,
             0.5,
         );
         let output = device.create_texture(&wgpu::TextureDescriptor {

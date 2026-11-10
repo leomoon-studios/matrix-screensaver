@@ -4,7 +4,7 @@ mod rain;
 pub mod renderer;
 pub mod settings;
 
-pub use settings::{Quality, RainType};
+pub use settings::{ColorTheme, Quality, RainType};
 
 // The atlas and shaders are embedded in the executable and in host libraries.
 pub const MATRIXCODE_MSDF: &[u8] = include_bytes!("../assets/matrixcode_msdf.png");

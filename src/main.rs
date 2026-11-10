@@ -15,12 +15,12 @@ use winit::{
     window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
 
+#[cfg(test)]
+use matrix_screensaver::{ColorTheme, RainType, settings::next_frame_deadline};
 use matrix_screensaver::{
     Quality,
     renderer::{RenderStatus, Renderer},
 };
-#[cfg(test)]
-use matrix_screensaver::{RainType, settings::next_frame_deadline};
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POINTER_STARTUP_GRACE: Duration = Duration::from_millis(300);
 const POINTER_DISMISS_DISTANCE: f64 = 8.0;
@@ -34,7 +34,7 @@ fn main() {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: matrix-screensaver [--screensaver] [--type modern|classic] [--fps 1..60] [--render-scale 0.25..1] [--app-id ID]\n\n--screensaver opens full-screen on each monitor and exits on input.\n--app-id sets the Wayland application ID for idle-manager integration.\nDefaults: --type modern --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
+            "Usage: matrix-screensaver [--screensaver] [--type modern|classic] [--color green|blue|red|yellow|purple|orange] [--fps 1..60] [--render-scale 0.25..1] [--app-id ID]\n\n--screensaver opens full-screen on each monitor and exits on input.\n--app-id sets the Wayland application ID for idle-manager integration.\nDefaults: --type modern --color green --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
         );
         return;
     }
@@ -478,18 +478,36 @@ mod tests {
 
     #[test]
     fn command_line_quality_overrides_defaults_and_rejects_bad_values() {
-        let defaults = Quality {
-            fps: 30,
-            render_scale: 0.5,
-            rain_type: RainType::Modern,
-            screensaver: false,
-        };
+        let defaults = Quality::default();
         let quality = defaults
             .with_arguments(["--fps", "60", "--render-scale=0.75"].map(str::to_owned))
             .unwrap();
         assert_eq!(quality.fps, 60);
         assert_eq!(quality.render_scale, 0.75);
         assert_eq!(quality.rain_type, RainType::Modern);
+        assert_eq!(quality.color, ColorTheme::Green);
+        for (name, expected) in [
+            ("green", ColorTheme::Green),
+            ("blue", ColorTheme::Blue),
+            ("red", ColorTheme::Red),
+            ("yellow", ColorTheme::Yellow),
+            ("purple", ColorTheme::Purple),
+            ("orange", ColorTheme::Orange),
+        ] {
+            assert_eq!(
+                defaults
+                    .with_arguments([format!("--color={name}")])
+                    .unwrap()
+                    .color,
+                expected
+            );
+        }
+        assert!(
+            defaults
+                .with_arguments(["--color=cyan".to_owned()])
+                .is_err()
+        );
+        assert!(defaults.with_arguments(["--color".to_owned()]).is_err());
         assert!(
             defaults
                 .with_arguments(["--screensaver".to_owned()])
@@ -527,9 +545,7 @@ mod tests {
         let start = Instant::now();
         let frame_time = Quality {
             fps: 60,
-            render_scale: 1.0,
-            rain_type: RainType::Modern,
-            screensaver: false,
+            ..Quality::default()
         }
         .frame_time();
         assert_eq!(
