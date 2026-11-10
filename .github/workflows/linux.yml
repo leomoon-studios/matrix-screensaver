@@ -16,10 +16,14 @@ jobs:
           sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt
-      - name: Format and test
+      - name: Format and run display-independent tests
         run: |
           cargo +stable fmt --check
-          cargo +stable test --locked
+          cargo +stable test --locked -- \
+            --skip post::tests::post_blooms_colors_and_presents \
+            --skip rain::tests::classic_starts_black_and_reveals_through_resize \
+            --skip rain::tests::rain_geometry_renders_two_targets_and_resizes \
+            --skip rain::tests::rain_state_starts_and_advances_on_gpu
       - name: Build and package
         run: |
           cargo +stable build --release --locked
@@ -72,6 +76,8 @@ jobs:
           fi
       - name: Build interactive test binary
         run: cargo build --release --locked
+      - name: Run GPU renderer tests
+        run: cargo test --locked
       - name: Run required display, lock, and recovery checks
         run: scripts/linux-graphics-check.sh '${{ matrix.mode }}'
       - name: Record fixed-hardware performance
