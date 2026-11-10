@@ -55,6 +55,7 @@ impl MatrixPost {
         primary: &wgpu::TextureView,
         high_pass: &wgpu::TextureView,
         rain_type: RainType,
+        render_scale: f32,
     ) -> Self {
         let shader = |label: &'static str, source: &'static str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -132,7 +133,7 @@ impl MatrixPost {
         );
         let palette_config = uniform(
             "Matrix palette settings",
-            bytemuck::cast_slice(&palette_config_data()),
+            bytemuck::cast_slice(&palette_config_data(render_scale)),
         );
         let palette_colors = uniform(
             "Matrix 512-color palette",
@@ -430,10 +431,12 @@ fn palette_data() -> [f32; 512 * 4] {
     output
 }
 
-fn palette_config_data() -> [f32; 20] {
+fn palette_config_data(render_scale: f32) -> [f32; 20] {
     let cursor = hsl(0.242, 1.0, 0.73);
     let mut data = [0.0; 20];
-    data[0] = 0.05;
+    // Each internal pixel covers more of the screen at lower render scales.
+    // Soften the per-pixel dither without changing the render resolution.
+    data[0] = 0.05 * render_scale;
     data[8..11].copy_from_slice(&cursor);
     data[12..15].copy_from_slice(&[1.0, 1.0, 1.0]);
     data[15] = 2.0;
@@ -549,6 +552,7 @@ mod tests {
             resources.primary_view(),
             resources.high_pass_view(),
             RainType::Modern,
+            0.5,
         );
         let final_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Matrix post test presentation"),
@@ -636,6 +640,7 @@ mod tests {
             resources.primary_view(),
             resources.high_pass_view(),
             RainType::Modern,
+            0.5,
         );
         let output = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Native comparison output"),

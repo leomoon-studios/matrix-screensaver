@@ -185,6 +185,7 @@ impl Renderer {
             rain.primary_view(),
             rain.high_pass_view(),
             quality.rain_type,
+            quality.render_scale,
         );
 
         eprintln!(
