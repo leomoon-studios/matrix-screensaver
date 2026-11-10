@@ -394,6 +394,19 @@ impl ReferenceResources {
         pass.set_bind_group(0, &self.render_bind_group, &[]);
         pass.draw(0..80 * 80 * 6, 0..1);
     }
+
+    pub fn primary_view(&self) -> &wgpu::TextureView {
+        &self.primary_view
+    }
+
+    pub fn high_pass_view(&self) -> &wgpu::TextureView {
+        &self.high_pass_view
+    }
+
+    #[cfg(test)]
+    pub fn high_pass_texture(&self) -> &wgpu::Texture {
+        &self.high_pass_texture
+    }
 }
 
 fn reference_scene(width: u32, height: u32) -> ReferenceScene {

@@ -10,6 +10,7 @@ use winit::{
 };
 
 mod reference_layout;
+mod reference_post;
 mod reference_resources;
 
 /// Bundled now so later rendering work never depends on network access or the
@@ -112,6 +113,7 @@ impl ApplicationHandler for App {
 
 struct Renderer {
     reference_resources: reference_resources::ReferenceResources,
+    reference_post: reference_post::ReferencePost,
     reference_frame: i32,
     instance: wgpu::Instance,
     window: Arc<Window>,
@@ -121,11 +123,11 @@ struct Renderer {
     config: wgpu::SurfaceConfiguration,
     params: Params,
     params_buffer: wgpu::Buffer,
-    compute_pipeline: wgpu::ComputePipeline,
-    render_pipeline: wgpu::RenderPipeline,
-    compose_pipeline: wgpu::RenderPipeline,
-    compute_bind_group: wgpu::BindGroup,
-    render_bind_group: wgpu::BindGroup,
+    _compute_pipeline: wgpu::ComputePipeline,
+    _render_pipeline: wgpu::RenderPipeline,
+    _compose_pipeline: wgpu::RenderPipeline,
+    _compute_bind_group: wgpu::BindGroup,
+    _render_bind_group: wgpu::BindGroup,
     compose_layout: wgpu::BindGroupLayout,
     compose_bind_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
@@ -202,6 +204,15 @@ impl Renderer {
             config.width,
             config.height,
         )?;
+        let reference_post = reference_post::ReferencePost::new(
+            &device,
+            config.width,
+            config.height,
+            config.format,
+            &reference_resources.time_buffer,
+            reference_resources.primary_view(),
+            reference_resources.high_pass_view(),
+        );
 
         let params = Params {
             time: 0.0,
@@ -523,6 +534,7 @@ impl Renderer {
 
         Ok(Self {
             reference_resources,
+            reference_post,
             reference_frame: 0,
             instance,
             window,
@@ -532,11 +544,11 @@ impl Renderer {
             config,
             params,
             params_buffer,
-            compute_pipeline,
-            render_pipeline,
-            compose_pipeline,
-            compute_bind_group,
-            render_bind_group,
+            _compute_pipeline: compute_pipeline,
+            _render_pipeline: render_pipeline,
+            _compose_pipeline: compose_pipeline,
+            _compute_bind_group: compute_bind_group,
+            _render_bind_group: render_bind_group,
             compose_layout,
             compose_bind_group,
             sampler,
@@ -561,6 +573,13 @@ impl Renderer {
             &self.queue,
             self.config.width,
             self.config.height,
+        );
+        self.reference_post.resize(
+            &self.device,
+            self.config.width,
+            self.config.height,
+            self.reference_resources.primary_view(),
+            self.reference_resources.high_pass_view(),
         );
         self.scene_texture = Self::create_scene_texture(&self.device, &self.config);
         self.scene_view = self.scene_texture.create_view(&Default::default());
@@ -654,57 +673,7 @@ impl Renderer {
             });
         self.reference_resources.encode_simulation(&mut encoder);
         self.reference_resources.encode_render(&mut encoder);
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Matrix 3D state simulation"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.compute_pipeline);
-            pass.set_bind_group(0, &self.compute_bind_group, &[]);
-            pass.dispatch_workgroups((GRID_SIZE * GRID_SIZE).div_ceil(64), 1, 1);
-        }
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Matrix rain scene pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.render_bind_group, &[]);
-            pass.draw(0..(GRID_SIZE * GRID_SIZE * 6), 0..1);
-        }
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Matrix bloom and palette pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.compose_pipeline);
-            pass.set_bind_group(0, &self.compose_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        self.reference_post.encode(&mut encoder, &view);
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
         self.reference_frame = self.reference_frame.wrapping_add(1);
