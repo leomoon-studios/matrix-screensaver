@@ -14,7 +14,50 @@ mod reference_resources;
 
 // The reference glyph atlas is embedded at compile time.
 const MATRIXCODE_MSDF: &[u8] = include_bytes!("../reference/matrix/assets/matrixcode_msdf.png");
-const FRAME_TIME: std::time::Duration = std::time::Duration::from_nanos(16_666_667);
+const DEFAULT_RENDER_SCALE: f32 = 0.75;
+
+#[derive(Clone, Copy)]
+struct Quality {
+    fps: u32,
+    render_scale: f32,
+}
+
+impl Quality {
+    fn from_environment() -> Result<Self, String> {
+        let low_power = std::env::var("MATRIX_LOW_POWER").is_ok_and(|value| value == "1");
+        let mut quality = Self {
+            fps: if low_power { 30 } else { 60 },
+            render_scale: if low_power { 0.5 } else { DEFAULT_RENDER_SCALE },
+        };
+        if let Ok(value) = std::env::var("MATRIX_FPS") {
+            quality.fps = value
+                .parse()
+                .map_err(|_| "MATRIX_FPS must be 1–60".to_owned())?;
+        }
+        if let Ok(value) = std::env::var("MATRIX_RENDER_SCALE") {
+            quality.render_scale = value
+                .parse()
+                .map_err(|_| "MATRIX_RENDER_SCALE must be 0.25–1".to_owned())?;
+        }
+        if !(1..=60).contains(&quality.fps) || !(0.25..=1.0).contains(&quality.render_scale) {
+            return Err(
+                "MATRIX_FPS must be 1–60 and MATRIX_RENDER_SCALE must be 0.25–1".to_owned(),
+            );
+        }
+        Ok(quality)
+    }
+
+    fn render_size(self, width: u32, height: u32) -> (u32, u32) {
+        (
+            ((width as f32 * self.render_scale).round() as u32).max(1),
+            ((height as f32 * self.render_scale).round() as u32).max(1),
+        )
+    }
+
+    fn frame_time(self) -> std::time::Duration {
+        std::time::Duration::from_secs_f64(1.0 / self.fps as f64)
+    }
+}
 
 fn main() {
     let event_loop = EventLoop::new().expect("failed to create the window event loop");
@@ -87,13 +130,17 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => renderer.resize(size),
+            WindowEvent::Occluded(occluded) => renderer.set_occluded(occluded),
             WindowEvent::RedrawRequested => renderer.render(event_loop),
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(renderer) = &self.renderer {
+        if let Some(renderer) = &self.renderer
+            && !renderer.occluded
+            && Instant::now() >= renderer.next_frame_at
+        {
             renderer.window.request_redraw();
         }
     }
@@ -111,10 +158,16 @@ struct Renderer {
     config: wgpu::SurfaceConfiguration,
     started_at: Instant,
     next_frame_at: Instant,
+    quality: Quality,
+    occluded: bool,
+    occluded_at: Option<Instant>,
+    benchmark_since: Option<Instant>,
+    benchmark_frames: u32,
 }
 
 impl Renderer {
     async fn new(window: Arc<Window>) -> Result<Self, String> {
+        let quality = Quality::from_environment()?;
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window.clone())
@@ -128,6 +181,9 @@ impl Renderer {
             })
             .await
             .map_err(|error| format!("no compatible GPU adapter: {error}"))?;
+        if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+            return Err("only a software graphics adapter was found; this GPU renderer would consume substantial CPU time".to_owned());
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Matrix Screensaver device"),
@@ -171,20 +227,21 @@ impl Renderer {
             present_mode,
             alpha_mode,
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
+        let (render_width, render_height) = quality.render_size(config.width, config.height);
         let reference_resources = reference_resources::ReferenceResources::new(
             &device,
             &queue,
             MATRIXCODE_MSDF,
-            config.width,
-            config.height,
+            render_width,
+            render_height,
         )?;
         let reference_post = reference_post::ReferencePost::new(
             &device,
-            config.width,
-            config.height,
+            render_width,
+            render_height,
             config.format,
             &reference_resources.time_buffer,
             reference_resources.primary_view(),
@@ -209,6 +266,13 @@ impl Renderer {
             config,
             started_at: Instant::now(),
             next_frame_at: Instant::now(),
+            quality,
+            occluded: false,
+            occluded_at: None,
+            benchmark_since: std::env::var("MATRIX_BENCHMARK")
+                .is_ok_and(|value| value == "1")
+                .then(Instant::now),
+            benchmark_frames: 0,
         })
     }
 
@@ -219,22 +283,22 @@ impl Renderer {
         self.config.width = size.width;
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
-        self.reference_resources.resize(
-            &self.device,
-            &self.queue,
-            self.config.width,
-            self.config.height,
-        );
+        let (render_width, render_height) = self.quality.render_size(size.width, size.height);
+        self.reference_resources
+            .resize(&self.device, &self.queue, render_width, render_height);
         self.reference_post.resize(
             &self.device,
-            self.config.width,
-            self.config.height,
+            render_width,
+            render_height,
             self.reference_resources.primary_view(),
             self.reference_resources.high_pass_view(),
         );
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
+        if self.occluded || Instant::now() < self.next_frame_at {
+            return;
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -286,15 +350,54 @@ impl Renderer {
         self.queue.present(frame);
         self.reference_frame = self.reference_frame.wrapping_add(1);
         let now = Instant::now();
-        self.next_frame_at = next_frame_deadline(self.next_frame_at, now);
+        if let Some(since) = self.benchmark_since {
+            self.benchmark_frames += 1;
+            let elapsed = now.duration_since(since);
+            if elapsed.as_secs() >= 10 {
+                eprintln!(
+                    "Matrix benchmark: {:.1} FPS over {:.1} s ({} frames)",
+                    self.benchmark_frames as f64 / elapsed.as_secs_f64(),
+                    elapsed.as_secs_f64(),
+                    self.benchmark_frames
+                );
+                self.benchmark_since = Some(now);
+                self.benchmark_frames = 0;
+            }
+        }
+        self.next_frame_at =
+            next_frame_deadline(self.next_frame_at, now, self.quality.frame_time());
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_at));
+    }
+
+    fn set_occluded(&mut self, occluded: bool) {
+        if self.occluded == occluded {
+            return;
+        }
+        self.occluded = occluded;
+        if occluded {
+            self.occluded_at = Some(Instant::now());
+        } else {
+            if let Some(since) = self.occluded_at.take() {
+                let paused = since.elapsed();
+                self.started_at += paused;
+                if let Some(benchmark_since) = &mut self.benchmark_since {
+                    *benchmark_since += paused;
+                }
+            }
+            self.next_frame_at = Instant::now();
+            self.window.request_redraw();
+        }
     }
 }
 
-fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
-    let mut deadline = previous + FRAME_TIME;
+fn next_frame_deadline(
+    previous: Instant,
+    now: Instant,
+    frame_time: std::time::Duration,
+) -> Instant {
+    let mut deadline = previous + frame_time;
     while deadline <= now {
-        deadline += FRAME_TIME;
+        deadline += frame_time;
     }
     deadline
 }
@@ -306,10 +409,18 @@ mod tests {
     #[test]
     fn frame_pacer_holds_a_60_hz_deadline_after_slow_frames() {
         let start = Instant::now();
-        assert_eq!(next_frame_deadline(start, start), start + FRAME_TIME);
+        let frame_time = Quality {
+            fps: 60,
+            render_scale: 1.0,
+        }
+        .frame_time();
         assert_eq!(
-            next_frame_deadline(start, start + FRAME_TIME + FRAME_TIME / 2),
-            start + FRAME_TIME * 2
+            next_frame_deadline(start, start, frame_time),
+            start + frame_time
+        );
+        assert_eq!(
+            next_frame_deadline(start, start + frame_time + frame_time / 2, frame_time),
+            start + frame_time * 2
         );
     }
 

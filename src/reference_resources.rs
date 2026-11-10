@@ -56,16 +56,22 @@ impl ReferenceResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let storage_usage = wgpu::BufferUsages::STORAGE
+            | if cfg!(test) {
+                wgpu::BufferUsages::COPY_SRC
+            } else {
+                wgpu::BufferUsages::empty()
+            };
         let cells = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Reference Cells"),
             size: (80 * 80 * std::mem::size_of::<ReferenceCell>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: storage_usage,
             mapped_at_creation: false,
         });
         let intro_cells = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Reference Intro Cells"),
             size: (80 * std::mem::size_of::<ReferenceIntroCell>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: storage_usage,
             mapped_at_creation: false,
         });
         let mut image = image::load_from_memory(atlas)
@@ -441,6 +447,13 @@ fn render_target(
     width: u32,
     height: u32,
 ) -> (wgpu::Texture, wgpu::TextureView) {
+    let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | if cfg!(test) {
+            wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::empty()
+        };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -452,9 +465,7 @@ fn render_target(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
+        usage,
         view_formats: &[],
     });
     let view = texture.create_view(&Default::default());
