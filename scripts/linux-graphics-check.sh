@@ -55,6 +55,14 @@ if [[ $mode == wayland ]]; then
   jq -e --slurpfile monitors <(hyprctl monitors -j) \
     '[.[] | select(.class == "org.omarchy.matrix-screensaver") | .monitor] | unique | length >= ($monitors[0] | length)' \
     "$log_dir/wayland-clients.json" >/dev/null
+  address=$(jq -r '.[] | select(.class == "org.omarchy.matrix-screensaver") | .address' "$log_dir/wayland-clients.json" | head -n 1)
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
+  active_class=$(hyprctl activewindow -j | jq -r '.class')
+  [[ $active_class == org.omarchy.matrix-screensaver ]] || {
+    echo "Could not focus screensaver window (active class: $active_class)" >&2
+    exit 1
+  }
+  sleep 0.2
   wtype -k Escape
   wait_for_exit || { echo 'Wayland key dismissal failed' >&2; exit 1; }
 else

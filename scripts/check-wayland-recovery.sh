@@ -29,6 +29,9 @@ sleep 3
 kill -0 "$child"
 after=$(hyprctl clients -j | jq '[.[] | select(.class == "org.omarchy.matrix-screensaver" and .fullscreen == 2)] | length')
 ((after >= 2)) || { echo "Recovery left only $after fullscreen windows" >&2; exit 1; }
+address=$(hyprctl clients -j | jq -r '.[] | select(.class == "org.omarchy.matrix-screensaver") | .address' | head -n 1)
+hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
+sleep 0.2
 wtype -k Escape
 deadline=$((SECONDS + 10))
 while ((SECONDS < deadline)) && kill -0 "$child" 2>/dev/null; do sleep 0.1; done
