@@ -8,12 +8,12 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
-mod reference_layout;
-mod reference_post;
-mod reference_resources;
+mod gpu_layout;
+mod post;
+mod rain;
 
-// The reference glyph atlas is embedded at compile time.
-const MATRIXCODE_MSDF: &[u8] = include_bytes!("../reference/matrix/assets/matrixcode_msdf.png");
+// The glyph atlas is embedded at compile time.
+const MATRIXCODE_MSDF: &[u8] = include_bytes!("../assets/matrixcode_msdf.png");
 const DEFAULT_RENDER_SCALE: f32 = 0.5;
 const DEFAULT_FPS: u32 = 30;
 
@@ -220,9 +220,9 @@ impl ApplicationHandler for App {
 }
 
 struct Renderer {
-    reference_resources: reference_resources::ReferenceResources,
-    reference_post: reference_post::ReferencePost,
-    reference_frame: i32,
+    rain: rain::RainResources,
+    post: post::MatrixPost,
+    simulation_frame: i32,
     instance: wgpu::Instance,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -343,7 +343,7 @@ impl Renderer {
         if profile_requested && !profile_supported {
             eprintln!("GPU timestamp queries are unsupported on this adapter");
         }
-        let reference_resources = reference_resources::ReferenceResources::new_for_type(
+        let rain = rain::RainResources::new_for_type(
             &device,
             &queue,
             MATRIXCODE_MSDF,
@@ -351,14 +351,14 @@ impl Renderer {
             render_height,
             quality.rain_type,
         )?;
-        let reference_post = reference_post::ReferencePost::new(
+        let post = post::MatrixPost::new(
             &device,
             render_width,
             render_height,
             config.format,
-            &reference_resources.time_buffer,
-            reference_resources.primary_view(),
-            reference_resources.high_pass_view(),
+            &rain.time_buffer,
+            rain.primary_view(),
+            rain.high_pass_view(),
             quality.rain_type,
         );
 
@@ -369,9 +369,9 @@ impl Renderer {
         );
 
         Ok(Self {
-            reference_resources,
-            reference_post,
-            reference_frame: 0,
+            rain,
+            post,
+            simulation_frame: 0,
             instance,
             window,
             surface,
@@ -404,14 +404,14 @@ impl Renderer {
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
         let (render_width, render_height) = self.quality.render_size(size.width, size.height);
-        self.reference_resources
+        self.rain
             .resize(&self.device, &self.queue, render_width, render_height);
-        self.reference_post.resize(
+        self.post.resize(
             &self.device,
             render_width,
             render_height,
-            self.reference_resources.primary_view(),
-            self.reference_resources.high_pass_view(),
+            self.rain.primary_view(),
+            self.rain.high_pass_view(),
         );
     }
 
@@ -459,11 +459,11 @@ impl Renderer {
         }
 
         self.queue.write_buffer(
-            &self.reference_resources.time_buffer,
+            &self.rain.time_buffer,
             0,
-            bytemuck::bytes_of(&reference_layout::ReferenceTime {
+            bytemuck::bytes_of(&gpu_layout::RainTime {
                 seconds: self.started_at.elapsed().as_secs_f32(),
-                frames: self.reference_frame,
+                frames: self.simulation_frame,
                 _padding: [0; 2],
             }),
         );
@@ -473,22 +473,22 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Matrix reference frame"),
+                label: Some("Matrix frame"),
             });
-        let profile_this_frame = self.profile_queries.is_some() && self.reference_frame % 300 == 0;
+        let profile_this_frame = self.profile_queries.is_some() && self.simulation_frame % 300 == 0;
         let queries = self.profile_queries.as_ref().filter(|_| profile_this_frame);
         if let Some(queries) = queries {
             encoder.write_timestamp(queries, 0);
         }
-        self.reference_resources.encode_simulation(&mut encoder);
+        self.rain.encode_simulation(&mut encoder);
         if let Some(queries) = queries {
             encoder.write_timestamp(queries, 1);
         }
-        self.reference_resources.encode_render(&mut encoder);
+        self.rain.encode_render(&mut encoder);
         if let Some(queries) = queries {
             encoder.write_timestamp(queries, 2);
         }
-        self.reference_post.encode(&mut encoder, &view, queries);
+        self.post.encode(&mut encoder, &view, queries);
         if let Some((queries, resolve, readback)) = queries
             .zip(self.profile_resolve.as_ref())
             .zip(self.profile_readback.as_ref())
@@ -504,7 +504,7 @@ impl Renderer {
         }
         self.queue.present(frame);
         self.last_presented_at = Some(Instant::now());
-        self.reference_frame = self.reference_frame.wrapping_add(1);
+        self.simulation_frame = self.simulation_frame.wrapping_add(1);
         let now = Instant::now();
         if let Some(since) = self.benchmark_since {
             if let Some(last) = self.benchmark_last_frame {
@@ -667,30 +667,6 @@ mod tests {
         assert_eq!(
             next_frame_deadline(start, start + frame_time + frame_time / 2, frame_time),
             start + frame_time * 2
-        );
-    }
-
-    #[test]
-    fn copied_gpu_shaders_match_the_local_reference() {
-        assert_eq!(
-            include_str!("shaders/reference-rain.wgsl"),
-            include_str!("../reference/matrix/shaders/wgsl/rainPass.wgsl")
-        );
-        assert_eq!(
-            include_str!("shaders/reference-bloom-blur.wgsl"),
-            include_str!("../reference/matrix/shaders/wgsl/bloomBlur.wgsl")
-        );
-        assert_eq!(
-            include_str!("shaders/reference-bloom-combine.wgsl"),
-            include_str!("../reference/matrix/shaders/wgsl/bloomCombine.wgsl")
-        );
-        assert_eq!(
-            include_str!("shaders/reference-palette.wgsl"),
-            include_str!("../reference/matrix/shaders/wgsl/palettePass.wgsl")
-        );
-        assert_eq!(
-            include_str!("shaders/reference-end.wgsl"),
-            include_str!("../reference/matrix/shaders/wgsl/endPass.wgsl")
         );
     }
 }

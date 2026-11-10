@@ -1,6 +1,8 @@
-# Third-party source and asset notices
+# Third-party notices
 
-The reference copy identifies [Rezmason/matrix](https://github.com/Rezmason/matrix) as its source. Its [upstream MIT license](https://github.com/Rezmason/matrix/blob/master/LICENSE) is reproduced below; the local copy did not contain the root license or an upstream revision identifier. Preserve this notice when distributing copied or adapted portions. The upstream README says the classic glyphs were derived from an archived official Matrix product; preserve that provenance alongside the MIT notice when distributing `matrixcode_msdf.png`.
+The rain shader design and bundled `assets/matrixcode_msdf.png` glyph atlas are derived from [Rezmason/matrix](https://github.com/Rezmason/matrix). Preserve this notice when distributing the binary or source. The upstream project describes the classic glyphs as derived from an archived official Matrix product; the code license alone does not establish independent rights to the glyph artwork.
+
+The original browser implementation includes [index.html](https://github.com/Rezmason/matrix/blob/master/index.html). The live demo views used while building this app are [modern 3D](https://tools.lmx.to/matrix/?version=3d) and [classic 2D](https://tools.lmx.to/matrix/?skipIntro=false).
 
 ## Rezmason/matrix
 
@@ -25,7 +27,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-## Bundled dependencies
-
-The reference includes third-party libraries and font-generation tools whose notices must be retained if those files are distributed. `reference/matrix/lib/gl-matrix.js` includes the gl-matrix MIT notice; `reference/matrix/lib/holoplaycore.module.js` includes MIT and Looking Glass notices; `reference/matrix/msdfgen/lib/FTL.TXT` contains the FreeType license; `reference/matrix/msdfgen/lib/lodepng.cpp` contains the LodePNG notice, and `tinyxml2.cpp` has its own header notice. These tools and browser libraries are not required for the native renderer merely to load the existing atlas.

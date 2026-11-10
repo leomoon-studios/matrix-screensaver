@@ -1,6 +1,6 @@
 # Matrix Screensaver
 
-A native Rust Matrix animation for Omarchy, with modern 3D and classic 2D rain. It opens a resizable GPU window and renders the copied reference rain, bloom, and palette pipeline. Screensaver and idle integration are still planned.
+A native Rust Matrix animation with modern 3D and classic 2D rain. It opens a resizable GPU window and renders rain, bloom, and color entirely on the GPU. Screensaver and idle integration are still planned.
 
 ## Build and run
 
@@ -24,7 +24,7 @@ MATRIX_WINDOW_SIZE=720x1280 cargo run
 MATRIX_WINDOW_SIZE=1024x1024 cargo run
 ```
 
-The default `--type modern` renders the 3D effect internally at 50% of the window's physical size and targets 30 FPS. This setting added about 3–4 W of GPU board power over idle in the single-monitor benchmark. Run `--type classic` for the flat Matrix rain with a black, staggered startup. For a closer classic reference comparison, use `./target/release/matrix-screensaver --type classic --fps 60 --render-scale 0.75`. To use the 3D reference's 75% internal scale and 60 FPS target:
+The default `--type modern` renders the 3D effect internally at 50% of the window's physical size and targets 30 FPS. This setting added about 3–4 W of GPU board power over idle in the single-monitor benchmark. Run `--type classic` for flat Matrix rain with a black, staggered startup. For a sharper image and smoother animation, use `./target/release/matrix-screensaver --type classic --fps 60 --render-scale 0.75`. The same quality settings work with modern:
 
 ```bash
 ./target/release/matrix-screensaver --fps 60 --render-scale 0.75
@@ -48,4 +48,4 @@ cargo test
 
 ## Attribution
 
-The bundled glyph atlas originates in the copied `Rezmason/matrix` reference. See [third-party notices](docs/third-party-notices.md) before redistributing it.
+The bundled glyph atlas and adapted shader design come from [Rezmason/matrix](https://github.com/Rezmason/matrix). See [third-party notices](docs/third-party-notices.md) before redistributing them.

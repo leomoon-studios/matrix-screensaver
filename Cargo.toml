@@ -3,7 +3,7 @@ name = "matrix-screensaver"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "A native GPU Matrix 3D screensaver for Omarchy"
+description = "A native GPU Matrix rain screensaver"
 license = "MIT"
 publish = false
 
