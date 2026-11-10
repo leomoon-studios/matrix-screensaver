@@ -292,7 +292,12 @@ impl ReferencePost {
         });
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, surface: &wgpu::TextureView) {
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface: &wgpu::TextureView,
+        timestamps: Option<&wgpu::QuerySet>,
+    ) {
         let targets = self
             .targets
             .as_ref()
@@ -319,6 +324,9 @@ impl ReferencePost {
             pass.set_bind_group(0, &targets.combine_group, &[]);
             pass.dispatch_workgroups(scaled_width.div_ceil(32), scaled_height, 1);
         }
+        if let Some(queries) = timestamps {
+            encoder.write_timestamp(queries, 3);
+        }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Reference palette pass"),
@@ -327,6 +335,9 @@ impl ReferencePost {
             pass.set_pipeline(&self.palette_pipeline);
             pass.set_bind_group(0, &targets.palette_group, &[]);
             pass.dispatch_workgroups(self.width.div_ceil(32), self.height, 1);
+        }
+        if let Some(queries) = timestamps {
+            encoder.write_timestamp(queries, 4);
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Reference final presentation"),
@@ -558,7 +569,7 @@ mod tests {
         });
         resources.encode_simulation(&mut encoder);
         resources.encode_render(&mut encoder);
-        post.encode(&mut encoder, &view);
+        post.encode(&mut encoder, &view, None);
         queue.submit([encoder.finish()]);
         let targets = post.targets.as_ref().unwrap();
         let bloom_width = ((128.0_f32 * BLOOM_SIZE).floor() as u32).max(1);
@@ -655,7 +666,7 @@ mod tests {
             resources.encode_simulation(&mut encoder);
             if frame == frames - 1 {
                 resources.encode_render(&mut encoder);
-                post.encode(&mut encoder, &view);
+                post.encode(&mut encoder, &view, None);
             }
             queue.submit([encoder.finish()]);
         }

@@ -157,6 +157,7 @@ struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     started_at: Instant,
+    last_presented_at: Option<Instant>,
     next_frame_at: Instant,
     quality: Quality,
     occluded: bool,
@@ -165,6 +166,9 @@ struct Renderer {
     benchmark_frames: u32,
     benchmark_last_frame: Option<Instant>,
     benchmark_intervals_ms: Vec<f64>,
+    profile_queries: Option<wgpu::QuerySet>,
+    profile_resolve: Option<wgpu::Buffer>,
+    profile_readback: Option<wgpu::Buffer>,
 }
 
 impl Renderer {
@@ -186,10 +190,18 @@ impl Renderer {
         if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
             return Err("only a software graphics adapter was found; this GPU renderer would consume substantial CPU time".to_owned());
         }
+        let profile_requested = std::env::var("MATRIX_PROFILE_GPU").is_ok_and(|value| value == "1");
+        let profile_features =
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+        let profile_supported = adapter.features().contains(profile_features);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Matrix Screensaver device"),
-                required_features: wgpu::Features::empty(),
+                required_features: if profile_requested && profile_supported {
+                    profile_features
+                } else {
+                    wgpu::Features::empty()
+                },
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
@@ -233,6 +245,32 @@ impl Renderer {
         };
         surface.configure(&device, &config);
         let (render_width, render_height) = quality.render_size(config.width, config.height);
+        let profile_queries = (profile_requested && profile_supported).then(|| {
+            device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("Matrix GPU pass timing"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 6,
+            })
+        });
+        let profile_readback = profile_queries.as_ref().map(|_| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Matrix GPU timing readback"),
+                size: 48,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        });
+        let profile_resolve = profile_queries.as_ref().map(|_| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Matrix GPU timing resolve"),
+                size: 48,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        });
+        if profile_requested && !profile_supported {
+            eprintln!("GPU timestamp queries are unsupported on this adapter");
+        }
         let reference_resources = reference_resources::ReferenceResources::new(
             &device,
             &queue,
@@ -267,6 +305,7 @@ impl Renderer {
             queue,
             config,
             started_at: Instant::now(),
+            last_presented_at: None,
             next_frame_at: Instant::now(),
             quality,
             occluded: false,
@@ -277,6 +316,9 @@ impl Renderer {
             benchmark_frames: 0,
             benchmark_last_frame: None,
             benchmark_intervals_ms: Vec::new(),
+            profile_queries,
+            profile_resolve,
+            profile_readback,
         })
     }
 
@@ -330,6 +372,18 @@ impl Renderer {
             }
         };
 
+        let acquired_at = Instant::now();
+        if let Some(last) = self.last_presented_at {
+            let gap = acquired_at.duration_since(last);
+            if gap > std::time::Duration::from_millis(250) {
+                self.started_at += gap;
+                if let Some(since) = &mut self.benchmark_since {
+                    *since += gap;
+                }
+                self.benchmark_last_frame = None;
+            }
+        }
+
         self.queue.write_buffer(
             &self.reference_resources.time_buffer,
             0,
@@ -347,11 +401,35 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Matrix reference frame"),
             });
+        let profile_this_frame = self.profile_queries.is_some() && self.reference_frame % 300 == 0;
+        let queries = self.profile_queries.as_ref().filter(|_| profile_this_frame);
+        if let Some(queries) = queries {
+            encoder.write_timestamp(queries, 0);
+        }
         self.reference_resources.encode_simulation(&mut encoder);
+        if let Some(queries) = queries {
+            encoder.write_timestamp(queries, 1);
+        }
         self.reference_resources.encode_render(&mut encoder);
-        self.reference_post.encode(&mut encoder, &view);
+        if let Some(queries) = queries {
+            encoder.write_timestamp(queries, 2);
+        }
+        self.reference_post.encode(&mut encoder, &view, queries);
+        if let Some((queries, resolve, readback)) = queries
+            .zip(self.profile_resolve.as_ref())
+            .zip(self.profile_readback.as_ref())
+            .map(|((q, r), b)| (q, r, b))
+        {
+            encoder.write_timestamp(queries, 5);
+            encoder.resolve_query_set(queries, 0..6, resolve, 0);
+            encoder.copy_buffer_to_buffer(resolve, 0, readback, 0, 48);
+        }
         self.queue.submit([encoder.finish()]);
+        if profile_this_frame {
+            self.read_gpu_profile();
+        }
         self.queue.present(frame);
+        self.last_presented_at = Some(Instant::now());
         self.reference_frame = self.reference_frame.wrapping_add(1);
         let now = Instant::now();
         if let Some(since) = self.benchmark_since {
@@ -396,6 +474,7 @@ impl Renderer {
         self.occluded = occluded;
         if occluded {
             self.occluded_at = Some(Instant::now());
+            self.last_presented_at = None;
             self.benchmark_last_frame = None;
         } else {
             if let Some(since) = self.occluded_at.take() {
@@ -408,6 +487,43 @@ impl Renderer {
             self.next_frame_at = Instant::now();
             self.window.request_redraw();
         }
+    }
+
+    fn read_gpu_profile(&self) {
+        let Some(readback) = &self.profile_readback else {
+            return;
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        if self
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .is_err()
+            || !matches!(receiver.recv(), Ok(Ok(())))
+        {
+            return;
+        }
+        if let Ok(mapped) = readback.slice(..).get_mapped_range() {
+            let stamps: Vec<u64> = mapped
+                .chunks_exact(8)
+                .map(bytemuck::pod_read_unaligned)
+                .collect();
+            let period_ms = self.queue.get_timestamp_period() as f64 / 1_000_000.0;
+            let durations: Vec<f64> = stamps
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]) as f64 * period_ms)
+                .collect();
+            eprintln!(
+                "GPU pass ms: simulation {:.3}, rain {:.3}, bloom {:.3}, palette {:.3}, presentation {:.3}",
+                durations[0], durations[1], durations[2], durations[3], durations[4]
+            );
+            drop(mapped);
+        }
+        readback.unmap();
     }
 }
 
