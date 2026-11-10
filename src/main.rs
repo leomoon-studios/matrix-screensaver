@@ -102,8 +102,14 @@ struct Renderer {
     params_buffer: wgpu::Buffer,
     compute_pipeline: wgpu::ComputePipeline,
     render_pipeline: wgpu::RenderPipeline,
+    compose_pipeline: wgpu::RenderPipeline,
     compute_bind_group: wgpu::BindGroup,
     render_bind_group: wgpu::BindGroup,
+    compose_layout: wgpu::BindGroupLayout,
+    compose_bind_group: wgpu::BindGroup,
+    sampler: wgpu::Sampler,
+    scene_texture: wgpu::Texture,
+    scene_view: wgpu::TextureView,
     started_at: Instant,
 }
 
@@ -296,6 +302,37 @@ impl Renderer {
                 },
             ],
         });
+        let compose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Matrix bloom and palette bindings"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+            ],
+        });
         let simulation_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Matrix 3D simulation shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/simulate.wgsl").into()),
@@ -303,6 +340,10 @@ impl Renderer {
         let rain_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Matrix 3D rain shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/rain.wgsl").into()),
+        });
+        let compose_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Matrix bloom and palette shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/compose.wgsl").into()),
         });
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Matrix 3D simulation pipeline"),
@@ -337,7 +378,7 @@ impl Renderer {
                 module: &rain_module,
                 entry_point: Some("fragment_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent {
                             operation: wgpu::BlendOperation::Add,
@@ -356,6 +397,39 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let compose_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Matrix bloom and palette pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Matrix bloom pipeline layout"),
+                    bind_group_layouts: &[Some(&compose_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &compose_module,
+                entry_point: Some("vertex_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &compose_module,
+                entry_point: Some("fragment_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let scene_texture = Self::create_scene_texture(&device, &config);
+        let scene_view = scene_texture.create_view(&Default::default());
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Matrix simulation bind group"),
             layout: &simulation_layout,
@@ -394,6 +468,24 @@ impl Renderer {
                 },
             ],
         });
+        let compose_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Matrix bloom bind group"),
+            layout: &compose_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&scene_view),
+                },
+            ],
+        });
 
         eprintln!(
             "GPU ready: {} (bundled matrix glyph atlas: {} bytes)",
@@ -412,8 +504,14 @@ impl Renderer {
             params_buffer,
             compute_pipeline,
             render_pipeline,
+            compose_pipeline,
             compute_bind_group,
             render_bind_group,
+            compose_layout,
+            compose_bind_group,
+            sampler,
+            scene_texture,
+            scene_view,
             started_at: Instant::now(),
         })
     }
@@ -428,6 +526,46 @@ impl Renderer {
         self.params.width = size.width as f32;
         self.params.height = size.height as f32;
         self.surface.configure(&self.device, &self.config);
+        self.scene_texture = Self::create_scene_texture(&self.device, &self.config);
+        self.scene_view = self.scene_texture.create_view(&Default::default());
+        self.compose_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Matrix bloom bind group"),
+            layout: &self.compose_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.scene_view),
+                },
+            ],
+        });
+    }
+
+    fn create_scene_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Matrix rain HDR scene"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
@@ -480,9 +618,9 @@ impl Renderer {
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Matrix Screensaver clear pass"),
+                label: Some("Matrix rain scene pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &self.scene_view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -498,6 +636,27 @@ impl Renderer {
             pass.set_pipeline(&self.render_pipeline);
             pass.set_bind_group(0, &self.render_bind_group, &[]);
             pass.draw(0..(GRID_SIZE * GRID_SIZE * 6), 0..1);
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Matrix bloom and palette pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.compose_pipeline);
+            pass.set_bind_group(0, &self.compose_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
