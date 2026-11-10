@@ -1,0 +1,87 @@
+name: Linux package and graphics
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: Format and test
+        run: |
+          cargo +stable fmt --check
+          cargo +stable test --locked
+      - name: Build and package
+        run: |
+          cargo +stable build --release --locked
+          scripts/package-linux.sh
+      - name: Inspect archive from another working directory
+        run: |
+          cd "$RUNNER_TEMP"
+          cp "$GITHUB_WORKSPACE"/dist/*.tar.gz* .
+          sha256sum -c ./*.sha256
+          tar -xzf ./*.tar.gz
+          test -x ./matrix-screensaver-*/matrix-screensaver
+          test -s ./matrix-screensaver-*/LICENSE
+          test -s ./matrix-screensaver-*/THIRD-PARTY-NOTICES.md
+          test -s ./matrix-screensaver-*/INSTALL.md
+          ./matrix-screensaver-*/matrix-screensaver --help
+          if ./matrix-screensaver-*/matrix-screensaver --type invalid; then
+            echo 'Invalid --type unexpectedly succeeded' >&2
+            exit 1
+          fi
+          ldd ./matrix-screensaver-*/matrix-screensaver | tee libraries.txt
+          ! grep -q 'not found' libraries.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matrix-screensaver-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  graphics:
+    needs: package
+    strategy:
+      matrix:
+        mode: [wayland, x11]
+    runs-on: [self-hosted, linux, x64, gpu, interactive, nvidia, "${{ matrix.mode }}"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require interactive graphics session
+        run: |
+          command -v nvidia-smi
+          if [[ '${{ matrix.mode }}' == wayland ]]; then
+            test -n "${WAYLAND_DISPLAY:-}" || { echo 'Wayland session missing' >&2; exit 1; }
+            command -v hyprctl
+            command -v wtype
+          else
+            test "${XDG_SESSION_TYPE:-}" = x11 || { echo 'Native Xorg session missing' >&2; exit 1; }
+            test -z "${WAYLAND_DISPLAY:-}" || { echo 'Xwayland is not a native Xorg session' >&2; exit 1; }
+            command -v xdotool
+            command -v xrandr
+          fi
+      - name: Build interactive test binary
+        run: cargo build --release --locked
+      - name: Run required display, lock, and recovery checks
+        run: scripts/linux-graphics-check.sh '${{ matrix.mode }}'
+      - name: Record fixed-hardware performance
+        if: matrix.mode == 'wayland'
+        run: |
+          python3 scripts/benchmark.py target/release/matrix-screensaver --type modern --seconds 60 > graphics-check-logs/modern-performance.json
+          python3 scripts/benchmark.py target/release/matrix-screensaver --type classic --seconds 60 > graphics-check-logs/classic-performance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-graphics-${{ matrix.mode }}-logs
+          path: graphics-check-logs/
+          if-no-files-found: error

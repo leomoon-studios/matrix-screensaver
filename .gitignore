@@ -1,2 +1,4 @@
 /target/
+/dist/
+/graphics-check-logs/
 __pycache__/
