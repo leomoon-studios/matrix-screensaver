@@ -21,6 +21,12 @@ def gpu_sample():
     return [float(value.strip()) for value in output.split(",")]
 
 
+def cpu_counters():
+    with open("/proc/stat", encoding="ascii") as stat:
+        fields = [int(value) for value in stat.readline().split()[1:]]
+    return sum(fields), fields[3] + fields[4]
+
+
 def process_sample(pid):
     try:
         with open(f"/proc/{pid}/statm", encoding="ascii") as statm:
@@ -85,8 +91,14 @@ def float_at_requested_size(pid, requested):
 def collect(seconds, pid=None):
     samples = []
     start = time.monotonic()
+    previous_cpu = cpu_counters()
     while time.monotonic() - start < seconds:
         sample = gpu_sample()
+        current_cpu = cpu_counters()
+        total_delta = current_cpu[0] - previous_cpu[0]
+        idle_delta = current_cpu[1] - previous_cpu[1]
+        sample.append(100 * (total_delta - idle_delta) / total_delta if total_delta else None)
+        previous_cpu = current_cpu
         if pid is not None:
             sample += process_sample(pid)
         samples.append(sample)
@@ -133,8 +145,8 @@ def main():
         "requested_size": args.size,
         "observed_window": geometry,
         "seconds": args.seconds,
-        "idle": {name: range_of(idle, index) for index, name in enumerate(("gpu_memory_mib", "gpu_util_percent", "board_power_w"))},
-        "running": {name: range_of(running, index) for index, name in enumerate(("gpu_memory_mib", "gpu_util_percent", "board_power_w", "rss_mib", "process_gpu_mib", "process_cpu_percent"))},
+        "idle": {name: range_of(idle, index) for index, name in enumerate(("gpu_memory_mib", "gpu_util_percent", "board_power_w", "system_cpu_percent"))},
+        "running": {name: range_of(running, index) for index, name in enumerate(("gpu_memory_mib", "gpu_util_percent", "board_power_w", "system_cpu_percent", "rss_mib", "process_gpu_mib", "process_cpu_percent"))},
         "log": [line for line in stderr.splitlines() if "GPU ready:" in line or "Matrix benchmark:" in line or "could not initialize" in line],
     }
     print(json.dumps(report, indent=2))

@@ -163,6 +163,8 @@ struct Renderer {
     occluded_at: Option<Instant>,
     benchmark_since: Option<Instant>,
     benchmark_frames: u32,
+    benchmark_last_frame: Option<Instant>,
+    benchmark_intervals_ms: Vec<f64>,
 }
 
 impl Renderer {
@@ -273,6 +275,8 @@ impl Renderer {
                 .is_ok_and(|value| value == "1")
                 .then(Instant::now),
             benchmark_frames: 0,
+            benchmark_last_frame: None,
+            benchmark_intervals_ms: Vec::new(),
         })
     }
 
@@ -351,17 +355,33 @@ impl Renderer {
         self.reference_frame = self.reference_frame.wrapping_add(1);
         let now = Instant::now();
         if let Some(since) = self.benchmark_since {
+            if let Some(last) = self.benchmark_last_frame {
+                self.benchmark_intervals_ms
+                    .push(now.duration_since(last).as_secs_f64() * 1000.0);
+            }
+            self.benchmark_last_frame = Some(now);
             self.benchmark_frames += 1;
             let elapsed = now.duration_since(since);
             if elapsed.as_secs() >= 10 {
+                self.benchmark_intervals_ms.sort_unstable_by(f64::total_cmp);
+                let count = self.benchmark_intervals_ms.len();
+                let p95 = self
+                    .benchmark_intervals_ms
+                    .get(count.saturating_sub(1) * 95 / 100)
+                    .copied()
+                    .unwrap_or(0.0);
+                let worst = self.benchmark_intervals_ms.last().copied().unwrap_or(0.0);
                 eprintln!(
-                    "Matrix benchmark: {:.1} FPS over {:.1} s ({} frames)",
+                    "Matrix benchmark: {:.1} FPS over {:.1} s ({} frames); interval p95 {:.2} ms, worst {:.2} ms",
                     self.benchmark_frames as f64 / elapsed.as_secs_f64(),
                     elapsed.as_secs_f64(),
-                    self.benchmark_frames
+                    self.benchmark_frames,
+                    p95,
+                    worst,
                 );
                 self.benchmark_since = Some(now);
                 self.benchmark_frames = 0;
+                self.benchmark_intervals_ms.clear();
             }
         }
         self.next_frame_at =
@@ -376,6 +396,7 @@ impl Renderer {
         self.occluded = occluded;
         if occluded {
             self.occluded_at = Some(Instant::now());
+            self.benchmark_last_frame = None;
         } else {
             if let Some(since) = self.occluded_at.take() {
                 let paused = since.elapsed();

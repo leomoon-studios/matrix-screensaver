@@ -32,7 +32,7 @@ MATRIX_LOW_POWER=1 cargo run
 
 That preset renders at 50% scale and targets 30 FPS. Override either setting with `MATRIX_RENDER_SCALE=0.25..1` and `MATRIX_FPS=1..60`; for example, `MATRIX_RENDER_SCALE=1 MATRIX_FPS=60 cargo run` restores full internal resolution. Integrated graphics are supported when the driver provides a compatible adapter. The app exits with a clear error on a CPU software adapter because that path has not met the screensaver's low-power target.
 
-For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver`. It samples idle and running GPU counters and process memory, and enables 10-second measured FPS reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
+For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver`. It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 
 ## Checks
 
