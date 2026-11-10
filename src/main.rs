@@ -24,6 +24,8 @@ const DEFAULT_FPS: u32 = 30;
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POINTER_STARTUP_GRACE: Duration = Duration::from_millis(300);
 const POINTER_DISMISS_DISTANCE: f64 = 8.0;
+const FOCUS_LOSS_GRACE: Duration = Duration::from_secs(1);
+const FOCUS_STARTUP_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RainType {
@@ -159,6 +161,8 @@ fn main() {
         next_monitor_poll: Instant::now(),
         failed: false,
         app_id,
+        started_at: Instant::now(),
+        unfocused_since: None,
     };
     event_loop.run_app(&mut app).expect("event loop error");
     if app.failed {
@@ -217,6 +221,8 @@ struct App {
     next_monitor_poll: Instant,
     failed: bool,
     app_id: Option<String>,
+    started_at: Instant,
+    unfocused_since: Option<Instant>,
 }
 
 impl ApplicationHandler for App {
@@ -286,11 +292,30 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        if self.quality.screensaver && !self.windows.is_empty() {
+            if self
+                .windows
+                .iter()
+                .any(|entry| entry.renderer.window.has_focus())
+            {
+                self.unfocused_since = None;
+            } else if now.duration_since(self.started_at) >= FOCUS_STARTUP_GRACE {
+                let since = self.unfocused_since.get_or_insert(now);
+                if now.duration_since(*since) >= FOCUS_LOSS_GRACE {
+                    event_loop.exit();
+                    return;
+                }
+            }
+        }
         if self.quality.screensaver && now >= self.next_monitor_poll {
             self.sync_monitors(event_loop);
             self.next_monitor_poll = now + MONITOR_POLL_INTERVAL;
         }
         let mut next_wake = self.quality.screensaver.then_some(self.next_monitor_poll);
+        if let Some(since) = self.unfocused_since {
+            let deadline = since + FOCUS_LOSS_GRACE;
+            next_wake = Some(next_wake.map_or(deadline, |wake| wake.min(deadline)));
+        }
         for entry in &self.windows {
             let renderer = &entry.renderer;
             if renderer.occluded {
