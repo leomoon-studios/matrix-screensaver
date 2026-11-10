@@ -1,0 +1,13 @@
+[package]
+name = "matrix-screensaver"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A native GPU Matrix 3D screensaver for Omarchy"
+license = "MIT"
+publish = false
+
+[dependencies]
+pollster = "0.4.0"
+wgpu = "30.0.1"
+winit = { version = "0.30.13", default-features = false, features = ["wayland", "x11", "rwh_06"] }
