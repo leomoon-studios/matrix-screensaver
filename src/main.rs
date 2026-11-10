@@ -9,6 +9,9 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
+mod reference_layout;
+mod reference_resources;
+
 /// Bundled now so later rendering work never depends on network access or the
 /// process working directory. The renderer will sample this atlas in Task 3.
 const MATRIXCODE_MSDF: &[u8] = include_bytes!("../reference/matrix/assets/matrixcode_msdf.png");
@@ -108,6 +111,7 @@ impl ApplicationHandler for App {
 }
 
 struct Renderer {
+    _reference_resources: reference_resources::ReferenceResources,
     instance: wgpu::Instance,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -190,6 +194,8 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        let reference_resources =
+            reference_resources::ReferenceResources::new(&device, &queue, MATRIXCODE_MSDF)?;
 
         let params = Params {
             time: 0.0,
@@ -510,6 +516,7 @@ impl Renderer {
         );
 
         Ok(Self {
+            _reference_resources: reference_resources,
             instance,
             window,
             surface,
