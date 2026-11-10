@@ -373,7 +373,13 @@ impl App {
     }
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop, monitor: Option<MonitorHandle>) {
-        let mut attrs = WindowAttributes::default().with_title("Matrix Screensaver");
+        let mut attrs = WindowAttributes::default().with_title(match &monitor {
+            Some(monitor) => format!(
+                "Matrix Screensaver [{}]",
+                monitor.name().unwrap_or_default()
+            ),
+            None => "Matrix Screensaver".to_owned(),
+        });
         if let Some(monitor) = &monitor {
             attrs = attrs
                 .with_fullscreen(Some(Fullscreen::Borderless(Some(monitor.clone()))))
@@ -504,7 +510,9 @@ impl Dismissal {
         }
         let Some(origin) = self.pointer_origin else {
             self.pointer_origin = Some(position);
-            return false;
+            // Wayland may not send an initial position. After the startup
+            // grace, the first motion is then the user's only activity.
+            return true;
         };
         let distance = (position.x - origin.x).hypot(position.y - origin.y);
         distance >= POINTER_DISMISS_DISTANCE * scale_factor
@@ -1062,14 +1070,16 @@ mod tests {
             start + Duration::from_millis(400),
             1.0
         ));
-        assert!(!refocused.on_input(
+        assert!(refocused.on_input(
             pointer(100.0, 100.0),
             start + Duration::from_millis(500),
             1.0
         ));
-        assert!(refocused.on_input(
-            pointer(108.0, 100.0),
-            start + Duration::from_millis(510),
+
+        let mut no_initial_position = Dismissal::new(start);
+        assert!(no_initial_position.on_input(
+            pointer(100.0, 100.0),
+            start + Duration::from_millis(400),
             1.0
         ));
 
