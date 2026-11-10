@@ -14,7 +14,8 @@ mod reference_resources;
 
 // The reference glyph atlas is embedded at compile time.
 const MATRIXCODE_MSDF: &[u8] = include_bytes!("../reference/matrix/assets/matrixcode_msdf.png");
-const DEFAULT_RENDER_SCALE: f32 = 0.75;
+const DEFAULT_RENDER_SCALE: f32 = 0.5;
+const DEFAULT_FPS: u32 = 30;
 
 #[derive(Clone, Copy)]
 struct Quality {
@@ -24,10 +25,9 @@ struct Quality {
 
 impl Quality {
     fn from_environment() -> Result<Self, String> {
-        let low_power = std::env::var("MATRIX_LOW_POWER").is_ok_and(|value| value == "1");
         let mut quality = Self {
-            fps: if low_power { 30 } else { 60 },
-            render_scale: if low_power { 0.5 } else { DEFAULT_RENDER_SCALE },
+            fps: DEFAULT_FPS,
+            render_scale: DEFAULT_RENDER_SCALE,
         };
         if let Ok(value) = std::env::var("MATRIX_FPS") {
             quality.fps = value

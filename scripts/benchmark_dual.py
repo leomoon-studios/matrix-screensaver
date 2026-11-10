@@ -44,7 +44,6 @@ def main():
     parser.add_argument("binary")
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--idle-seconds", type=int, default=10)
-    parser.add_argument("--low-power", action="store_true")
     args = parser.parse_args()
     monitors = json.loads(subprocess.check_output(["hyprctl", "monitors", "-j"], text=True))
     if len(monitors) != 2:
@@ -53,8 +52,6 @@ def main():
     baseline = collect(args.idle_seconds, [])
     env = os.environ.copy()
     env["MATRIX_BENCHMARK"] = "1"
-    if args.low_power:
-        env["MATRIX_LOW_POWER"] = "1"
     processes = []
     try:
         focus_monitor(monitors[0]["name"])

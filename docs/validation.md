@@ -1,5 +1,7 @@
 # Renderer validation
 
+The current default is 30 FPS at 50% internal scale. Earlier sections describe measurements made before this default changed; their 60 FPS and 75% scale runs remain historical comparisons. Use `MATRIX_FPS=60 MATRIX_RENDER_SCALE=0.75` to reproduce those quality settings.
+
 ## 3B capture run
 
 On the NVIDIA GeForce RTX 3060, native reference frames were captured at frame 1 and frame 121 (two seconds at 60 Hz) for 1280 × 720, 720 × 1280, and 1024 × 1024. Each native capture drives the same copied reference state, rain, bloom, palette, and end shaders that the application uses.
@@ -46,9 +48,9 @@ Repeatable commands on this host:
 
 ```bash
 cargo build --release
-python scripts/benchmark.py target/release/matrix-screensaver --seconds 60 --size 1280x720 --float
-python scripts/benchmark.py target/release/matrix-screensaver --seconds 60 --size 1280x720
-WGPU_BACKEND=vulkan VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json MATRIX_LOW_POWER=1 MATRIX_BENCHMARK=1 timeout 35s target/release/matrix-screensaver
+MATRIX_FPS=60 MATRIX_RENDER_SCALE=0.75 python scripts/benchmark.py target/release/matrix-screensaver --seconds 60 --size 1280x720 --float
+MATRIX_FPS=60 MATRIX_RENDER_SCALE=0.75 python scripts/benchmark.py target/release/matrix-screensaver --seconds 60 --size 1280x720
+WGPU_BACKEND=vulkan VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json MATRIX_BENCHMARK=1 timeout 35s target/release/matrix-screensaver
 ```
 
 ## Two-monitor performance check
@@ -69,8 +71,8 @@ With two Dell S2721QS displays connected at 3840 × 2160, 59.997 Hz and scale 1.
 The low-power preset saved roughly 17 W of measured running board power in this session. The two-instance GPU allocation is about twice the one-window 260–264 MiB allocation, as expected. Total GPU memory and utilization include changing desktop activity: in the two default runs, the idle total was about 4710 MiB and the running total about 5300 MiB, while idle GPU utilization fluctuated widely. Process GPU allocation, frame rate, and the repeated board-power readings were steadier. This check does not show that launching one instance automatically covers both monitors.
 
 ```bash
+MATRIX_FPS=60 MATRIX_RENDER_SCALE=0.75 python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60
 python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60
-python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60 --low-power
 ```
 
 ## Single-monitor comparison with Omarchy effects

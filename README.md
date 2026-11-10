@@ -24,17 +24,17 @@ MATRIX_WINDOW_SIZE=720x1280 cargo run
 MATRIX_WINDOW_SIZE=1024x1024 cargo run
 ```
 
-The default renders internally at 75% of the window's physical size, matching the hosted reference's resolution setting, and targets 60 FPS. For lower power use:
+The default renders internally at 50% of the window's physical size and targets 30 FPS. This setting added about 3–4 W of GPU board power over idle in the single-monitor benchmark. To use the reference's 75% internal scale and 60 FPS target:
 
 ```bash
-MATRIX_LOW_POWER=1 cargo run
+MATRIX_RENDER_SCALE=0.75 MATRIX_FPS=60 cargo run
 ```
 
-That preset renders at 50% scale and targets 30 FPS. Override either setting with `MATRIX_RENDER_SCALE=0.25..1` and `MATRIX_FPS=1..60`; for example, `MATRIX_RENDER_SCALE=1 MATRIX_FPS=60 cargo run` restores full internal resolution. Integrated graphics are supported when the driver provides a compatible adapter. The app exits with a clear error on a CPU software adapter because that path has not met the screensaver's low-power target.
+Override either setting with `MATRIX_RENDER_SCALE=0.25..1` and `MATRIX_FPS=1..60`; for example, `MATRIX_RENDER_SCALE=1 MATRIX_FPS=60 cargo run` uses full internal resolution. Integrated graphics are supported when the driver provides a compatible adapter. The app exits with a clear error on a CPU software adapter because that path has not met the screensaver's low-power target.
 
 For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver`. It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 
-For two connected Hyprland monitors, run `python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60`. It starts one instance per monitor and measures both simultaneously. Add `--low-power` to check the 30 FPS preset.
+For two connected Hyprland monitors, run `python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60`. It starts one instance per monitor and measures both simultaneously. The current default is the measured 30 FPS preset.
 
 ## Checks
 
