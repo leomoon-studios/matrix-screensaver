@@ -111,7 +111,8 @@ impl ApplicationHandler for App {
 }
 
 struct Renderer {
-    _reference_resources: reference_resources::ReferenceResources,
+    reference_resources: reference_resources::ReferenceResources,
+    reference_frame: i32,
     instance: wgpu::Instance,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -516,7 +517,8 @@ impl Renderer {
         );
 
         Ok(Self {
-            _reference_resources: reference_resources,
+            reference_resources,
+            reference_frame: 0,
             instance,
             window,
             surface,
@@ -593,6 +595,15 @@ impl Renderer {
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
         self.params.time = self.started_at.elapsed().as_secs_f32();
+        self.queue.write_buffer(
+            &self.reference_resources.time_buffer,
+            0,
+            bytemuck::bytes_of(&reference_layout::ReferenceTime {
+                seconds: self.params.time,
+                frames: self.reference_frame,
+                _padding: [0; 2],
+            }),
+        );
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&self.params));
         let frame = match self.surface.get_current_texture() {
@@ -630,6 +641,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Matrix Screensaver clear pass"),
             });
+        self.reference_resources.encode_simulation(&mut encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Matrix 3D state simulation"),
@@ -683,6 +695,7 @@ impl Renderer {
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
+        self.reference_frame = self.reference_frame.wrapping_add(1);
         event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
     }
 }
