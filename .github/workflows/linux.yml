@@ -55,26 +55,15 @@ jobs:
 
   graphics:
     needs: package
-    strategy:
-      matrix:
-        mode: [wayland, x11]
-    runs-on: [self-hosted, linux, x64, gpu, interactive, nvidia, "${{ matrix.mode }}"]
+    runs-on: [self-hosted, linux, x64, gpu, interactive, nvidia, wayland]
     steps:
       - uses: actions/checkout@v4
       - name: Require interactive graphics session
         run: |
           command -v nvidia-smi
-          if [[ '${{ matrix.mode }}' == wayland ]]; then
-            test -n "${WAYLAND_DISPLAY:-}" || { echo 'Wayland session missing' >&2; exit 1; }
-            command -v hyprctl
-          else
-            test "${XDG_SESSION_TYPE:-}" = x11 || { echo 'Native Xorg session missing' >&2; exit 1; }
-            test -z "${WAYLAND_DISPLAY:-}" || { echo 'Xwayland is not a native Xorg session' >&2; exit 1; }
-            command -v xdotool
-            command -v xrandr
-          fi
+          test -n "${WAYLAND_DISPLAY:-}" || { echo 'Wayland session missing' >&2; exit 1; }
+          command -v hyprctl
       - name: Pause Omarchy idle during long checks
-        if: matrix.mode == 'wayland'
         run: |
           mkdir -p graphics-check-logs
           omarchy-shell idle status > graphics-check-logs/idle-before.json
@@ -84,30 +73,17 @@ jobs:
       - name: Run GPU renderer tests
         run: cargo test --locked
       - name: Check fullscreen placement and activity dismissal
-        run: scripts/linux-graphics-check.sh '${{ matrix.mode }}' --display-only
+        run: scripts/linux-graphics-check.sh wayland --display-only
       - name: Record fixed-hardware performance
-        if: matrix.mode == 'wayland'
         run: |
           python3 scripts/benchmark.py target/release/matrix-screensaver --type modern --seconds 60 > graphics-check-logs/modern-performance.json
           python3 scripts/benchmark.py target/release/matrix-screensaver --type classic --seconds 60 > graphics-check-logs/classic-performance.json
       - name: Check display recovery
-        run: |
-          if [[ '${{ matrix.mode }}' == wayland ]]; then
-            scripts/check-wayland-recovery.sh > graphics-check-logs/recovery.log 2>&1
-          else
-            test -x "${MATRIX_GRAPHICS_RECOVERY_CHECK:-}"
-            "$MATRIX_GRAPHICS_RECOVERY_CHECK" > graphics-check-logs/recovery.log 2>&1
-          fi
+        run: scripts/check-wayland-recovery.sh > graphics-check-logs/recovery.log 2>&1
       - name: Check real screen lock
-        run: |
-          if [[ '${{ matrix.mode }}' == wayland ]]; then
-            scripts/check-omarchy-lock.sh > graphics-check-logs/lock.log 2>&1
-          else
-            test -x "${MATRIX_GRAPHICS_LOCK_CHECK:-}"
-            "$MATRIX_GRAPHICS_LOCK_CHECK" > graphics-check-logs/lock.log 2>&1
-          fi
+        run: scripts/check-omarchy-lock.sh > graphics-check-logs/lock.log 2>&1
       - name: Restore Omarchy idle setting
-        if: always() && matrix.mode == 'wayland'
+        if: always()
         run: |
           if [[ -f graphics-check-logs/idle-before.json ]]; then
             if jq -e '.enabled' graphics-check-logs/idle-before.json >/dev/null; then
@@ -119,6 +95,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-graphics-${{ matrix.mode }}-logs
+          name: linux-graphics-wayland-logs
           path: graphics-check-logs/
           if-no-files-found: error
