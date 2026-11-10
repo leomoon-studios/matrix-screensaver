@@ -34,8 +34,14 @@ fn wobble(value: f32) -> f32 {
 fn rain_brightness(time: f32, glyph_pos: vec2<f32>) -> f32 {
     let offset = random_float(vec2<f32>(glyph_pos.x, 0.0)) * 1000.0;
     let speed = random_float(vec2<f32>(glyph_pos.x + 0.1, 0.0)) * 0.5 + 0.5;
-    let rain_time = wobble((glyph_pos.y * 0.01 + offset + time * 0.5 * speed) / 0.3);
-    return 1.0 - fract(rain_time);
+    // WGSL's screen-space orientation differs from the WebGL reference's
+    // fragment-coordinate convention, so time advances with the opposite sign
+    // to preserve the reference's top-to-bottom visual motion.
+    let rain_time = wobble((glyph_pos.y * 0.01 + offset - time * 0.5 * speed) / 0.3);
+    // With the native screen orientation, this is the same visual ramp as the
+    // reference's `1 - fract(...)`: bright at the falling head, then fading
+    // through the older symbols above it.
+    return fract(rain_time);
 }
 
 @compute @workgroup_size(64)
@@ -50,7 +56,7 @@ fn simulate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let glyph_pos = vec2<f32>(f32(column), f32(row));
     let brightness = rain_brightness(params.time, glyph_pos);
     let below = rain_brightness(params.time, glyph_pos + vec2<f32>(0.0, -1.0));
-    let cursor = select(0.0, 1.0, brightness > below);
+    let cursor = select(0.0, 1.0, brightness < below);
     let glyph_age = fract(random_float(glyph_pos / f32(GRID) + 0.5) + params.time * 0.03);
     let glyph = floor(57.0 * random_float(glyph_pos / f32(GRID) + floor(params.time * 0.03)));
     let depth = fract(random_float(vec2<f32>(f32(column), 0.0)) + params.time * 0.25);
