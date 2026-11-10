@@ -1,6 +1,6 @@
 # Matrix Screensaver
 
-A native Rust foundation for an Omarchy Matrix 3D screensaver. It currently opens a resizable native GPU window and clears it to black. The volumetric rain renderer is planned for Task 3.
+A native Rust Matrix 3D animation for Omarchy. It opens a resizable GPU window and renders the copied reference rain, bloom, and palette pipeline. Screensaver and idle integration are still planned.
 
 ## Build and run
 
@@ -14,7 +14,7 @@ cargo run
 
 The project enables Wayland and X11 backends in `winit`; on Omarchy it will use the Wayland session. It requests a native `wgpu` adapter and reports a readable failure if no compatible GPU surface or device is available.
 
-`reference/matrix/assets/matrixcode_msdf.png` is compiled into the executable. Running the binary therefore does not fetch assets or require a browser, network connection, or working-directory-relative asset path.
+The glyph atlas and WGSL shaders are compiled into the executable. Running the binary does not fetch assets or require a browser, network connection, or working-directory-relative asset path. The active settings and GPU resource formats are documented in [renderer details](docs/renderer.md).
 
 For visual regression checks, choose a starting window size without changing the renderer:
 
@@ -29,6 +29,7 @@ MATRIX_WINDOW_SIZE=1024x1024 cargo run
 ```bash
 cargo fmt --check
 cargo check
+cargo test
 ```
 
 ## Attribution
