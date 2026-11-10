@@ -7,7 +7,7 @@ use crate::reference_layout::{
 pub struct ReferenceResources {
     pub _config: wgpu::Buffer,
     pub _time: wgpu::Buffer,
-    pub _scene: wgpu::Buffer,
+    scene_buffer: wgpu::Buffer,
     pub _cells: wgpu::Buffer,
     pub _intro_cells: wgpu::Buffer,
     pub _sampler: wgpu::Sampler,
@@ -15,8 +15,12 @@ pub struct ReferenceResources {
     pub _glint_msdf: wgpu::Texture,
     pub _base: wgpu::Texture,
     pub _glint: wgpu::Texture,
-    pub _render_bind_group: wgpu::BindGroup,
-    pub _validation_pipeline: wgpu::RenderPipeline,
+    render_bind_group: wgpu::BindGroup,
+    render_pipeline: wgpu::RenderPipeline,
+    primary_texture: wgpu::Texture,
+    primary_view: wgpu::TextureView,
+    high_pass_texture: wgpu::Texture,
+    high_pass_view: wgpu::TextureView,
     pub time_buffer: wgpu::Buffer,
     intro_pipeline: wgpu::ComputePipeline,
     main_pipeline: wgpu::ComputePipeline,
@@ -25,7 +29,13 @@ pub struct ReferenceResources {
 }
 
 impl ReferenceResources {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, atlas: &[u8]) -> Result<Self, String> {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        atlas: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
         let config = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Reference Config"),
             contents: bytemuck::bytes_of(&ReferenceConfig::matrix_3d()),
@@ -187,16 +197,29 @@ impl ReferenceResources {
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Reference rain WGSL validation"),
+            label: Some("Reference rain WGSL"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/reference-rain.wgsl").into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Reference rain pipeline layout validation"),
+            label: Some("Reference rain pipeline layout"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let validation_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Reference rain binding validation"),
+        let additive = wgpu::BlendComponent {
+            operation: wgpu::BlendOperation::Add,
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+        };
+        let target = wgpu::ColorTargetState {
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            blend: Some(wgpu::BlendState {
+                color: additive,
+                alpha: additive,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        };
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Reference rain geometry"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &module,
@@ -207,10 +230,7 @@ impl ReferenceResources {
             fragment: Some(wgpu::FragmentState {
                 module: &module,
                 entry_point: Some("fragMain"),
-                targets: &[
-                    Some(wgpu::TextureFormat::Rgba8Unorm.into()),
-                    Some(wgpu::TextureFormat::Rgba8Unorm.into()),
-                ],
+                targets: &[Some(target.clone()), Some(target)],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
@@ -275,6 +295,15 @@ impl ReferenceResources {
                 },
             ],
         });
+        let (primary_texture, primary_view) =
+            render_target(device, "Reference rain brightness", width, height);
+        let (high_pass_texture, high_pass_view) =
+            render_target(device, "Reference rain high pass", width, height);
+        queue.write_buffer(
+            &scene,
+            0,
+            bytemuck::bytes_of(&reference_scene(width, height)),
+        );
         Ok(Self {
             time_buffer: time.clone(),
             intro_pipeline,
@@ -283,7 +312,7 @@ impl ReferenceResources {
             main_group,
             _config: config,
             _time: time,
-            _scene: scene,
+            scene_buffer: scene,
             _cells: cells,
             _intro_cells: intro_cells,
             _sampler: sampler,
@@ -291,8 +320,12 @@ impl ReferenceResources {
             _glint_msdf: glint_msdf,
             _base: base,
             _glint: glint,
-            _render_bind_group: render_bind_group,
-            _validation_pipeline: validation_pipeline,
+            render_bind_group,
+            render_pipeline,
+            primary_texture,
+            primary_view,
+            high_pass_texture,
+            high_pass_view,
         })
     }
 
@@ -316,6 +349,103 @@ impl ReferenceResources {
             pass.dispatch_workgroups(80_u32.div_ceil(32), 80, 1);
         }
     }
+
+    pub fn resize(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
+        queue.write_buffer(
+            &self.scene_buffer,
+            0,
+            bytemuck::bytes_of(&reference_scene(width, height)),
+        );
+        (self.primary_texture, self.primary_view) =
+            render_target(device, "Reference rain brightness", width, height);
+        (self.high_pass_texture, self.high_pass_view) =
+            render_target(device, "Reference rain high pass", width, height);
+    }
+
+    pub fn encode_render(&self, encoder: &mut wgpu::CommandEncoder) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Reference rain geometry pass"),
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &self.primary_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &self.high_pass_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+            ],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.render_pipeline);
+        pass.set_bind_group(0, &self.render_bind_group, &[]);
+        pass.draw(0..80 * 80 * 6, 0..1);
+    }
+}
+
+fn reference_scene(width: u32, height: u32) -> ReferenceScene {
+    let aspect = width as f32 / height as f32;
+    let near = 0.0001_f32;
+    let far = 1000.0_f32;
+    ReferenceScene {
+        screen_size: if aspect > 1.0 {
+            [1.0, aspect]
+        } else {
+            [1.0 / aspect, 1.0]
+        },
+        _padding: [0.0; 2],
+        camera: [
+            [1.0 / aspect, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, far / (near - far), -1.0],
+            [0.0, 0.0, far * near / (near - far), 0.0],
+        ],
+        transform: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, -1.0, 1.0],
+        ],
+    }
+}
+
+fn render_target(
+    device: &wgpu::Device,
+    label: &'static str,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    (texture, view)
 }
 
 fn buffer_entry(
@@ -457,6 +587,69 @@ mod tests {
         (cells, intro)
     }
 
+    fn rendered_pixels(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &ReferenceResources,
+        width: u32,
+        height: u32,
+        high_pass: bool,
+    ) -> Vec<u8> {
+        let bytes_per_row = (width * 4).div_ceil(256) * 256;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Reference geometry test readback"),
+            size: u64::from(bytes_per_row * height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Reference geometry test"),
+        });
+        resources.encode_render(&mut encoder);
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: if high_pass {
+                    &resources.high_pass_texture
+                } else {
+                    &resources.primary_texture
+                },
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let (sender, receiver) = mpsc::channel();
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap()
+            });
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        receiver.recv().unwrap().unwrap();
+        let mapped = readback.slice(..).get_mapped_range().unwrap();
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for row in mapped.chunks_exact(bytes_per_row as usize) {
+            pixels.extend_from_slice(&row[..(width * 4) as usize]);
+        }
+        drop(mapped);
+        readback.unmap();
+        pixels
+    }
+
     #[test]
     fn reference_state_starts_and_advances_on_gpu() {
         let instance = wgpu::Instance::default();
@@ -476,7 +669,8 @@ mod tests {
             trace: wgpu::Trace::Off,
         }))
         .unwrap();
-        let resources = ReferenceResources::new(&device, &queue, crate::MATRIXCODE_MSDF).unwrap();
+        let resources =
+            ReferenceResources::new(&device, &queue, crate::MATRIXCODE_MSDF, 640, 480).unwrap();
         let (first, first_intro) = snapshot(&device, &queue, &resources, 0.0, 0);
         assert_eq!(first.len(), 80 * 80);
         assert_eq!(first_intro.len(), 80);
@@ -531,5 +725,80 @@ mod tests {
                 .zip(&first)
                 .any(|(new, old)| new.symbol[0] != old.symbol[0])
         );
+    }
+
+    #[test]
+    fn reference_geometry_renders_two_targets_and_resizes() {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            apply_limit_buckets: false,
+        }))
+        .unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Reference geometry test device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .unwrap();
+        let mut resources =
+            ReferenceResources::new(&device, &queue, crate::MATRIXCODE_MSDF, 128, 128).unwrap();
+        snapshot(&device, &queue, &resources, 0.0, 0);
+        let primary = rendered_pixels(&device, &queue, &resources, 128, 128, false);
+        let high_pass = rendered_pixels(&device, &queue, &resources, 128, 128, true);
+        let lit: Vec<_> = primary
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, p)| p[0] > 0 || p[1] > 0)
+            .map(|(i, _)| (i % 128, i / 128))
+            .collect();
+        assert!(lit.len() > 1_000 && lit.len() < 10_000);
+        assert!(lit.iter().map(|p| p.0).max().unwrap() > 100);
+        assert!(lit.iter().map(|p| p.1).max().unwrap() > 100);
+        assert_eq!(primary.len(), 128 * 128 * 4);
+        assert!(primary.chunks_exact(4).filter(|pixel| pixel[0] > 0).count() > 100);
+        assert!(primary.chunks_exact(4).any(|pixel| pixel[1] > 0));
+        assert!(primary.chunks_exact(4).any(|pixel| pixel[0] == 0));
+        assert!(high_pass.chunks_exact(4).any(|pixel| pixel[0] > 0));
+        assert!(
+            high_pass
+                .iter()
+                .zip(&primary)
+                .all(|(high, base)| high <= base)
+        );
+
+        // The reference depth is fract(startDepth + seconds * 0.25): four seconds
+        // makes a full depth cycle while the stored glyph state remains fixed.
+        queue.write_buffer(
+            &resources.time_buffer,
+            0,
+            bytemuck::bytes_of(&ReferenceTime {
+                seconds: 4.0,
+                frames: 0,
+                _padding: [0; 2],
+            }),
+        );
+        let wrapped = rendered_pixels(&device, &queue, &resources, 128, 128, false);
+        let changed = wrapped
+            .iter()
+            .zip(&primary)
+            .filter(|(new, old)| new != old)
+            .count();
+        assert!(
+            changed < primary.len() / 20,
+            "depth cycle changed {changed} output bytes"
+        );
+
+        resources.resize(&device, &queue, 256, 128);
+        assert!((reference_scene(256, 128).camera[0][0] - 0.5).abs() < 0.0001);
+        assert!((reference_scene(128, 256).camera[0][0] - 2.0).abs() < 0.0001);
+        let wide = rendered_pixels(&device, &queue, &resources, 256, 128, false);
+        assert_eq!(wide.len(), 256 * 128 * 4);
+        assert!(wide.chunks_exact(4).any(|pixel| pixel[0] > 0));
     }
 }

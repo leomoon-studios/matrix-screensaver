@@ -195,8 +195,13 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        let reference_resources =
-            reference_resources::ReferenceResources::new(&device, &queue, MATRIXCODE_MSDF)?;
+        let reference_resources = reference_resources::ReferenceResources::new(
+            &device,
+            &queue,
+            MATRIXCODE_MSDF,
+            config.width,
+            config.height,
+        )?;
 
         let params = Params {
             time: 0.0,
@@ -551,6 +556,12 @@ impl Renderer {
         self.params.width = size.width as f32;
         self.params.height = size.height as f32;
         self.surface.configure(&self.device, &self.config);
+        self.reference_resources.resize(
+            &self.device,
+            &self.queue,
+            self.config.width,
+            self.config.height,
+        );
         self.scene_texture = Self::create_scene_texture(&self.device, &self.config);
         self.scene_view = self.scene_texture.create_view(&Default::default());
         self.compose_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -642,6 +653,7 @@ impl Renderer {
                 label: Some("Matrix Screensaver clear pass"),
             });
         self.reference_resources.encode_simulation(&mut encoder);
+        self.reference_resources.encode_render(&mut encoder);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Matrix 3D state simulation"),
