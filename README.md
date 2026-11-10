@@ -52,6 +52,8 @@ cargo check
 cargo test
 ```
 
+The standard test command runs pure tests and reports GPU tests as ignored. To run the GPU tests on a machine with a native graphics adapter, use `cargo test --lib -- --ignored --skip capture_native_frame`. The [renderer details](docs/renderer.md#automated-checks) explain what the cross-platform Actions jobs verify.
+
 ## Attribution
 
 The bundled glyph atlas and adapted shader design come from [Rezmason/matrix](https://github.com/Rezmason/matrix). See [third-party notices](docs/third-party-notices.md) before redistributing them.

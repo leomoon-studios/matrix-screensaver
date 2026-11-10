@@ -45,6 +45,7 @@ pub struct MatrixPost {
 }
 
 impl MatrixPost {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device: &wgpu::Device,
         width: u32,
@@ -517,6 +518,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GPU; run by name on a GPU runner"]
     fn post_blooms_colors_and_presents() {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -526,6 +528,7 @@ mod tests {
             apply_limit_buckets: false,
         }))
         .unwrap();
+        assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Matrix post test device"),
             required_features: wgpu::Features::empty(),
@@ -593,7 +596,7 @@ mod tests {
     /// Run with MATRIX_CAPTURE_SIZE=1280x720, MATRIX_CAPTURE_FRAME=121, and
     /// MATRIX_CAPTURE_FILE=/tmp/native.png to make a deterministic comparison.
     #[test]
-    #[ignore]
+    #[ignore = "manual capture; requires MATRIX_CAPTURE_* variables and a GPU"]
     fn capture_native_frame() {
         let size = std::env::var("MATRIX_CAPTURE_SIZE").unwrap();
         let (width, height) = size.split_once('x').unwrap();
@@ -611,6 +614,7 @@ mod tests {
             apply_limit_buckets: false,
         }))
         .unwrap();
+        assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Native comparison capture"),
             required_features: wgpu::Features::empty(),

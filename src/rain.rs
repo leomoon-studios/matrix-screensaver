@@ -692,6 +692,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GPU; run by name on a GPU runner"]
     fn rain_state_starts_and_advances_on_gpu() {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -701,6 +702,7 @@ mod tests {
             apply_limit_buckets: false,
         }))
         .expect("GPU adapter needed for rain state test");
+        assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Matrix state test device"),
             required_features: wgpu::Features::empty(),
@@ -769,6 +771,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GPU; run by name on a GPU runner"]
     fn classic_starts_black_and_reveals_through_resize() {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -778,6 +781,7 @@ mod tests {
             apply_limit_buckets: false,
         }))
         .unwrap();
+        assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Classic intro test device"),
             required_features: wgpu::Features::empty(),
@@ -821,6 +825,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GPU; run by name on a GPU runner"]
     fn rain_geometry_renders_two_targets_and_resizes() {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -830,6 +835,7 @@ mod tests {
             apply_limit_buckets: false,
         }))
         .unwrap();
+        assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Matrix geometry test device"),
             required_features: wgpu::Features::empty(),

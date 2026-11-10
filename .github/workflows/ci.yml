@@ -1,0 +1,60 @@
+name: Cross-platform checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install native Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - name: Format, lint, build, and run non-GPU tests
+        run: |
+          set -euo pipefail
+          mkdir -p ci-output
+          cargo +1.99.1 fmt --all -- --check 2>&1 | tee ci-output/format.log
+          cargo +1.99.1 clippy --all-targets --locked -- -D warnings 2>&1 | tee ci-output/clippy.log
+          cargo +1.99.1 build --release --locked 2>&1 | tee ci-output/build.log
+          cargo +1.99.1 test --locked --no-run 2>&1 | tee ci-output/test-compile.log
+          cargo +1.99.1 test --locked -- --nocapture 2>&1 | tee ci-output/tests.log
+          cargo +1.99.1 test --locked -- --list > ci-output/test-list.txt
+          echo 'GPU tests are compiled but intentionally ignored on standard hosted runners.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Run the ignored GPU tests by name on a verified GPU runner; the manual capture test also needs MATRIX_CAPTURE_* variables.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Check command line and embedded assets from another directory
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/target/release/matrix-screensaver"
+          if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; fi
+          cd "$RUNNER_TEMP"
+          "$binary" --help > "$GITHUB_WORKSPACE/ci-output/help.log"
+          grep -q 'modern|classic' "$GITHUB_WORKSPACE/ci-output/help.log"
+          if "$binary" --type invalid > "$GITHUB_WORKSPACE/ci-output/invalid-type.log" 2>&1; then
+            echo 'Invalid --type unexpectedly succeeded' >&2
+            exit 1
+          fi
+          grep -q -- '--type must be modern or classic' "$GITHUB_WORKSPACE/ci-output/invalid-type.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: checks-${{ matrix.os }}
+          path: |
+            ci-output/
+            target/release/matrix-screensaver
+            target/release/matrix-screensaver.exe
+          if-no-files-found: warn

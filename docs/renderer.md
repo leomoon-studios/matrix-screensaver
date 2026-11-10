@@ -10,7 +10,7 @@ The app embeds its WGSL shaders from `src/shaders/` and its 512 × 512 MSDF glyp
 | Fall speed / raindrop length | 0.5 / 0.3 | 0.3 / 0.75 |
 | Base brightness / contrast | −0.9 / 1.5 | −0.5 / 1.1 |
 | Intro | Starts with active rain | Starts black; columns reveal from top in a staggered sequence |
-| Bloom strength | 0.7 | 0.55 |
+| Bloom strength | 0.7 | 0.45 |
 
 Both modes use the same 57-symbol glyph atlas, 80 × 80 cell state, green palette, four bloom levels, and bright isolated cursor color. Classic's lower bloom strength is an intentional visual adjustment. The default power setting is 30 FPS at 50% internal resolution. `--fps` and `--render-scale` adjust those values without changing the mode.
 
@@ -29,6 +29,26 @@ Both modes use the same 57-symbol glyph atlas, 80 × 80 cell state, green palett
 | Window surface | Available sRGB format and FIFO presentation preferred |
 
 Resizing recreates targets and updates the scene while preserving animation state. The app rejects a software CPU adapter to avoid expensive rendering on that path.
+
+## Host boundary
+
+`src/lib.rs` contains the GPU simulation, embedded assets, shaders, mode settings, and presentation code. `src/main.rs` owns the standalone window, monitor tracking, input dismissal, and idle-session behavior. A native host can construct a `wgpu::Surface` for its window or view and pass it, its physical pixel size, and a `wgpu::Instance` to `Renderer::new_for_surface`. The host must keep the window or view alive until the renderer is dropped. For multiple windows, pass the first renderer as `shared` and create each surface from the same instance; this shares one GPU device.
+
+The host calls `resize` when its backing pixel size changes, `render` on a frame tick, and `pause`/`resume` when animation is suspended. `RenderStatus::SurfaceLost` asks the host to create another surface and call `replace_surface`. `stop` consumes the renderer and releases its resources. The standalone `winit` host uses `new_for_window` and `recreate_surface_for_window` as conveniences. Windows and macOS screensaver hosts are separate later steps.
+
+The standalone host selects Vulkan or GL on Linux, Direct3D 12 on Windows, and Metal on macOS. A supplied native surface must be compatible with its instance and adapter.
+
+## Automated checks
+
+`.github/workflows/ci.yml` builds and runs non-GPU tests on Ubuntu 24.04, Windows Server 2025, macOS 15 Apple Silicon, and macOS 15 Intel. It compiles the GPU tests but leaves them ignored on these standard hosted runners. The test log and test list make the distinction visible. A green standard-runner job proves compilation, pure logic, CLI validation, and embedded assets; it does not prove a GPU render or screensaver integration.
+
+On a verified native GPU, run the render tests explicitly:
+
+```bash
+cargo test --locked --lib -- --ignored --skip capture_native_frame
+```
+
+The capture test needs the environment variables below and runs separately.
 
 ## Capture check
 
