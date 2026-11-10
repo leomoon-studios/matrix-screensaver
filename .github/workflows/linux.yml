@@ -74,17 +74,49 @@ jobs:
             command -v xdotool
             command -v xrandr
           fi
+      - name: Pause Omarchy idle during long checks
+        if: matrix.mode == 'wayland'
+        run: |
+          mkdir -p graphics-check-logs
+          omarchy-shell idle status > graphics-check-logs/idle-before.json
+          omarchy-shell idle disable
       - name: Build interactive test binary
         run: cargo build --release --locked
       - name: Run GPU renderer tests
         run: cargo test --locked
-      - name: Run required display, lock, and recovery checks
-        run: scripts/linux-graphics-check.sh '${{ matrix.mode }}'
+      - name: Check fullscreen placement and activity dismissal
+        run: scripts/linux-graphics-check.sh '${{ matrix.mode }}' --display-only
       - name: Record fixed-hardware performance
         if: matrix.mode == 'wayland'
         run: |
           python3 scripts/benchmark.py target/release/matrix-screensaver --type modern --seconds 60 > graphics-check-logs/modern-performance.json
           python3 scripts/benchmark.py target/release/matrix-screensaver --type classic --seconds 60 > graphics-check-logs/classic-performance.json
+      - name: Check display recovery
+        run: |
+          if [[ '${{ matrix.mode }}' == wayland ]]; then
+            scripts/check-wayland-recovery.sh > graphics-check-logs/recovery.log 2>&1
+          else
+            test -x "${MATRIX_GRAPHICS_RECOVERY_CHECK:-}"
+            "$MATRIX_GRAPHICS_RECOVERY_CHECK" > graphics-check-logs/recovery.log 2>&1
+          fi
+      - name: Check real screen lock
+        run: |
+          if [[ '${{ matrix.mode }}' == wayland ]]; then
+            scripts/check-omarchy-lock.sh > graphics-check-logs/lock.log 2>&1
+          else
+            test -x "${MATRIX_GRAPHICS_LOCK_CHECK:-}"
+            "$MATRIX_GRAPHICS_LOCK_CHECK" > graphics-check-logs/lock.log 2>&1
+          fi
+      - name: Restore Omarchy idle setting
+        if: always() && matrix.mode == 'wayland'
+        run: |
+          if [[ -f graphics-check-logs/idle-before.json ]]; then
+            if jq -e '.enabled' graphics-check-logs/idle-before.json >/dev/null; then
+              omarchy-shell idle enable
+            else
+              omarchy-shell idle disable
+            fi
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
