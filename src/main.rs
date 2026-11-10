@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
+use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -11,6 +12,17 @@ use winit::{
 /// Bundled now so later rendering work never depends on network access or the
 /// process working directory. The renderer will sample this atlas in Task 3.
 const MATRIXCODE_MSDF: &[u8] = include_bytes!("../reference/matrix/assets/matrixcode_msdf.png");
+const GRID_SIZE: u32 = 80;
+const FRAME_TIME: std::time::Duration = std::time::Duration::from_nanos(16_666_667);
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Params {
+    time: f32,
+    aspect: f32,
+    width: f32,
+    height: f32,
+}
 
 fn main() {
     let event_loop = EventLoop::new().expect("failed to create the window event loop");
@@ -86,6 +98,13 @@ struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    params: Params,
+    params_buffer: wgpu::Buffer,
+    compute_pipeline: wgpu::ComputePipeline,
+    render_pipeline: wgpu::RenderPipeline,
+    compute_bind_group: wgpu::BindGroup,
+    render_bind_group: wgpu::BindGroup,
+    started_at: Instant,
 }
 
 impl Renderer {
@@ -99,6 +118,7 @@ impl Renderer {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|error| format!("no compatible GPU adapter: {error}"))?;
@@ -107,6 +127,7 @@ impl Renderer {
                 label: Some("Matrix Screensaver device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
             })
@@ -148,6 +169,232 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
+        let params = Params {
+            time: 0.0,
+            aspect: config.width as f32 / config.height as f32,
+            width: config.width as f32,
+            height: config.height as f32,
+        };
+        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Matrix 3D parameters"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let cell_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Matrix 3D simulation cells"),
+            size: u64::from(GRID_SIZE * GRID_SIZE) * 32,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let glyph_image = image::load_from_memory(MATRIXCODE_MSDF)
+            .map_err(|error| format!("could not decode bundled glyph atlas: {error}"))?
+            .into_rgba8();
+        let (glyph_width, glyph_height) = glyph_image.dimensions();
+        let glyph_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Matrix glyph MSDF atlas"),
+            size: wgpu::Extent3d {
+                width: glyph_width,
+                height: glyph_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &glyph_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            glyph_image.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * glyph_width),
+                rows_per_image: Some(glyph_height),
+            },
+            wgpu::Extent3d {
+                width: glyph_width,
+                height: glyph_height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Matrix glyph sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let simulation_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Matrix simulation bindings"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let render_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Matrix render bindings"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let simulation_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Matrix 3D simulation shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/simulate.wgsl").into()),
+        });
+        let rain_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Matrix 3D rain shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/rain.wgsl").into()),
+        });
+        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Matrix 3D simulation pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Matrix simulation pipeline layout"),
+                    bind_group_layouts: &[Some(&simulation_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            module: &simulation_module,
+            entry_point: Some("simulate"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Matrix 3D rain pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Matrix rain pipeline layout"),
+                    bind_group_layouts: &[Some(&render_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &rain_module,
+                entry_point: Some("vertex_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &rain_module,
+                entry_point: Some("fragment_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            operation: wgpu::BlendOperation::Add,
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                        },
+                        alpha: wgpu::BlendComponent::OVER,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Matrix simulation bind group"),
+            layout: &simulation_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: cell_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Matrix rain bind group"),
+            layout: &render_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(
+                        &glyph_texture.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: cell_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
         eprintln!(
             "GPU ready: {} (bundled matrix glyph atlas: {} bytes)",
             adapter.get_info().name,
@@ -161,6 +408,13 @@ impl Renderer {
             device,
             queue,
             config,
+            params,
+            params_buffer,
+            compute_pipeline,
+            render_pipeline,
+            compute_bind_group,
+            render_bind_group,
+            started_at: Instant::now(),
         })
     }
 
@@ -170,10 +424,16 @@ impl Renderer {
         }
         self.config.width = size.width;
         self.config.height = size.height;
+        self.params.aspect = size.width as f32 / size.height as f32;
+        self.params.width = size.width as f32;
+        self.params.height = size.height as f32;
         self.surface.configure(&self.device, &self.config);
     }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) {
+        self.params.time = self.started_at.elapsed().as_secs_f32();
+        self.queue
+            .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&self.params));
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -210,7 +470,16 @@ impl Renderer {
                 label: Some("Matrix Screensaver clear pass"),
             });
         {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Matrix 3D state simulation"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &self.compute_bind_group, &[]);
+            pass.dispatch_workgroups((GRID_SIZE * GRID_SIZE).div_ceil(64), 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Matrix Screensaver clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -224,9 +493,14 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &self.render_bind_group, &[]);
+            pass.draw(0..(GRID_SIZE * GRID_SIZE * 6), 0..1);
         }
         self.queue.submit([encoder.finish()]);
-        frame.present();
+        self.queue.present(frame);
+        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
     }
 }
