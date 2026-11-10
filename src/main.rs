@@ -357,6 +357,7 @@ struct Dismissal {
 
 enum DismissalInput {
     Key { pressed: bool, synthetic: bool },
+    Modifier { active: bool },
     MouseButton { pressed: bool },
     Scroll { moved: bool },
     Touch { started: bool },
@@ -372,6 +373,13 @@ impl Dismissal {
     }
 
     fn handles(&mut self, event: &WindowEvent, now: Instant, scale_factor: f64) -> bool {
+        if matches!(
+            event,
+            WindowEvent::CursorLeft { .. } | WindowEvent::Focused(false)
+        ) {
+            self.pointer_origin = None;
+            return false;
+        }
         let input = match event {
             WindowEvent::KeyboardInput {
                 event,
@@ -380,6 +388,9 @@ impl Dismissal {
             } => DismissalInput::Key {
                 pressed: event.state == ElementState::Pressed,
                 synthetic: *is_synthetic,
+            },
+            WindowEvent::ModifiersChanged(modifiers) => DismissalInput::Modifier {
+                active: !modifiers.state().is_empty(),
             },
             WindowEvent::MouseInput { state, .. } => DismissalInput::MouseButton {
                 pressed: *state == ElementState::Pressed,
@@ -404,6 +415,7 @@ impl Dismissal {
     fn on_input(&mut self, input: DismissalInput, now: Instant, scale_factor: f64) -> bool {
         match input {
             DismissalInput::Key { pressed, synthetic } => pressed && !synthetic,
+            DismissalInput::Modifier { active } => active,
             DismissalInput::MouseButton { pressed } => pressed,
             DismissalInput::Scroll { moved } => moved,
             DismissalInput::Touch { started } => started,
@@ -954,11 +966,30 @@ mod tests {
         assert!(!scaled.on_input(pointer(12.0, 0.0), start + Duration::from_millis(400), 2.0));
         assert!(scaled.on_input(pointer(16.0, 0.0), start + Duration::from_millis(410), 2.0));
 
+        let mut refocused = Dismissal::new(start);
+        assert!(!refocused.on_input(pointer(10.0, 10.0), start, 1.0));
+        assert!(!refocused.handles(
+            &WindowEvent::Focused(false),
+            start + Duration::from_millis(400),
+            1.0
+        ));
+        assert!(!refocused.on_input(
+            pointer(100.0, 100.0),
+            start + Duration::from_millis(500),
+            1.0
+        ));
+        assert!(refocused.on_input(
+            pointer(108.0, 100.0),
+            start + Duration::from_millis(510),
+            1.0
+        ));
+
         for input in [
             DismissalInput::Key {
                 pressed: true,
                 synthetic: false,
             },
+            DismissalInput::Modifier { active: true },
             DismissalInput::MouseButton { pressed: true },
             DismissalInput::Scroll { moved: true },
             DismissalInput::Touch { started: true },
@@ -970,6 +1001,7 @@ mod tests {
                 pressed: true,
                 synthetic: true,
             },
+            DismissalInput::Modifier { active: false },
             DismissalInput::Key {
                 pressed: false,
                 synthetic: false,
