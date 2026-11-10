@@ -1,5 +1,6 @@
 use wgpu::util::DeviceExt;
 
+use crate::RainType;
 use crate::reference_layout::{
     ReferenceCell, ReferenceConfig, ReferenceIntroCell, ReferenceScene, ReferenceTime,
 };
@@ -26,9 +27,11 @@ pub struct ReferenceResources {
     main_pipeline: wgpu::ComputePipeline,
     intro_group: wgpu::BindGroup,
     main_group: wgpu::BindGroup,
+    rain_type: RainType,
 }
 
 impl ReferenceResources {
+    #[cfg(test)]
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -36,9 +39,24 @@ impl ReferenceResources {
         width: u32,
         height: u32,
     ) -> Result<Self, String> {
+        Self::new_for_type(device, queue, atlas, width, height, RainType::Modern)
+    }
+
+    pub fn new_for_type(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        atlas: &[u8],
+        width: u32,
+        height: u32,
+        rain_type: RainType,
+    ) -> Result<Self, String> {
+        let reference_config = match rain_type {
+            RainType::Modern => ReferenceConfig::matrix_3d(),
+            RainType::Classic => ReferenceConfig::matrix_classic(),
+        };
         let config = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Reference Config"),
-            contents: bytemuck::bytes_of(&ReferenceConfig::matrix_3d()),
+            contents: bytemuck::bytes_of(&reference_config),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let time = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -311,6 +329,7 @@ impl ReferenceResources {
             bytemuck::bytes_of(&reference_scene(width, height)),
         );
         Ok(Self {
+            rain_type,
             time_buffer: time.clone(),
             intro_pipeline,
             main_pipeline,
@@ -398,7 +417,11 @@ impl ReferenceResources {
         });
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, &self.render_bind_group, &[]);
-        pass.draw(0..80 * 80 * 6, 0..1);
+        let vertices = match self.rain_type {
+            RainType::Modern => 80 * 80 * 6,
+            RainType::Classic => 6,
+        };
+        pass.draw(0..vertices, 0..1);
     }
 
     pub fn primary_view(&self) -> &wgpu::TextureView {
@@ -748,6 +771,58 @@ mod tests {
                 .iter()
                 .zip(&first)
                 .any(|(new, old)| new.symbol[0] != old.symbol[0])
+        );
+    }
+
+    #[test]
+    fn classic_starts_black_and_reveals_through_resize() {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            apply_limit_buckets: false,
+        }))
+        .unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Classic intro test device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .unwrap();
+        let mut resources = ReferenceResources::new_for_type(
+            &device,
+            &queue,
+            crate::MATRIXCODE_MSDF,
+            128,
+            128,
+            RainType::Classic,
+        )
+        .unwrap();
+        let (first, intro) = snapshot(&device, &queue, &resources, 0.0, 0);
+        assert!(intro.iter().all(|cell| cell.progress[0] < 0.0));
+        assert!(first.iter().all(|cell| cell.raindrop[2] == 0.0));
+        let black = rendered_pixels(&device, &queue, &resources, 128, 128, false);
+        assert!(
+            black
+                .chunks_exact(4)
+                .all(|pixel| pixel[0] == 0 && pixel[1] == 0)
+        );
+
+        let (early, _) = snapshot(&device, &queue, &resources, 3.0, 1);
+        let early_active = early.iter().filter(|cell| cell.raindrop[2] > 0.0).count();
+        assert!(early_active > 0 && early_active < 80 * 80);
+        resources.resize(&device, &queue, 160, 96);
+        let (late, _) = snapshot(&device, &queue, &resources, 10.0, 2);
+        let late_active = late.iter().filter(|cell| cell.raindrop[2] > 0.0).count();
+        assert!(late_active > early_active);
+        let lit = rendered_pixels(&device, &queue, &resources, 160, 96, false);
+        assert!(
+            lit.chunks_exact(4)
+                .any(|pixel| pixel[0] > 0 || pixel[1] > 0)
         );
     }
 

@@ -17,10 +17,17 @@ const MATRIXCODE_MSDF: &[u8] = include_bytes!("../reference/matrix/assets/matrix
 const DEFAULT_RENDER_SCALE: f32 = 0.5;
 const DEFAULT_FPS: u32 = 30;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RainType {
+    Modern,
+    Classic,
+}
+
 #[derive(Clone, Copy)]
 struct Quality {
     fps: u32,
     render_scale: f32,
+    rain_type: RainType,
 }
 
 impl Quality {
@@ -28,6 +35,7 @@ impl Quality {
         let mut quality = Self {
             fps: DEFAULT_FPS,
             render_scale: DEFAULT_RENDER_SCALE,
+            rain_type: RainType::Modern,
         };
         if let Ok(value) = std::env::var("MATRIX_FPS") {
             quality.fps = value
@@ -52,6 +60,17 @@ impl Quality {
                     (flag, Some(value))
                 });
             match flag {
+                "--type" => {
+                    let value = inline_value
+                        .map(str::to_owned)
+                        .or_else(|| args.next())
+                        .ok_or("--type needs modern or classic")?;
+                    self.rain_type = match value.as_str() {
+                        "modern" => RainType::Modern,
+                        "classic" => RainType::Classic,
+                        _ => return Err(format!("--type must be modern or classic, got {value}")),
+                    };
+                }
                 "--fps" => {
                     let value = inline_value
                         .map(str::to_owned)
@@ -100,7 +119,7 @@ fn main() {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: matrix-screensaver [--fps 1..60] [--render-scale 0.25..1]\n\nDefaults: --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
+            "Usage: matrix-screensaver [--type modern|classic] [--fps 1..60] [--render-scale 0.25..1]\n\nDefaults: --type modern --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
         );
         return;
     }
@@ -324,12 +343,13 @@ impl Renderer {
         if profile_requested && !profile_supported {
             eprintln!("GPU timestamp queries are unsupported on this adapter");
         }
-        let reference_resources = reference_resources::ReferenceResources::new(
+        let reference_resources = reference_resources::ReferenceResources::new_for_type(
             &device,
             &queue,
             MATRIXCODE_MSDF,
             render_width,
             render_height,
+            quality.rain_type,
         )?;
         let reference_post = reference_post::ReferencePost::new(
             &device,
@@ -339,6 +359,7 @@ impl Renderer {
             &reference_resources.time_buffer,
             reference_resources.primary_view(),
             reference_resources.high_pass_view(),
+            quality.rain_type,
         );
 
         eprintln!(
@@ -601,12 +622,22 @@ mod tests {
         let defaults = Quality {
             fps: 30,
             render_scale: 0.5,
+            rain_type: RainType::Modern,
         };
         let quality = defaults
             .with_arguments(["--fps", "60", "--render-scale=0.75"].map(str::to_owned))
             .unwrap();
         assert_eq!(quality.fps, 60);
         assert_eq!(quality.render_scale, 0.75);
+        assert_eq!(quality.rain_type, RainType::Modern);
+        assert_eq!(
+            defaults
+                .with_arguments(["--type=classic".to_owned()])
+                .unwrap()
+                .rain_type,
+            RainType::Classic
+        );
+        assert!(defaults.with_arguments(["--type=3d".to_owned()]).is_err());
         assert!(
             defaults
                 .with_arguments(["--fps", "0"].map(str::to_owned))
@@ -626,6 +657,7 @@ mod tests {
         let frame_time = Quality {
             fps: 60,
             render_scale: 1.0,
+            rain_type: RainType::Modern,
         }
         .frame_time();
         assert_eq!(

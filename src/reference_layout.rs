@@ -73,6 +73,17 @@ const _: () = assert!(std::mem::size_of::<ReferenceCell>() == 48);
 const _: () = assert!(std::mem::size_of::<ReferenceIntroCell>() == 16);
 
 impl ReferenceConfig {
+    pub fn matrix_classic() -> Self {
+        let mut config = Self::matrix_3d();
+        config.fall_speed = 0.3;
+        config.ripple[0] = 0.75;
+        config.render[2] = -0.5;
+        config.render[3] = 1.1;
+        config.booleans[0] = 0; // Flat, single-quad renderer.
+        config.booleans[4] = 0; // Enable the staggered intro.
+        config
+    }
+
     pub fn matrix_3d() -> Self {
         Self {
             animation_speed: 1.0,

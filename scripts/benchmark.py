@@ -117,13 +117,14 @@ def main():
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--idle-seconds", type=int, default=10)
     parser.add_argument("--size", default="1280x720")
+    parser.add_argument("--type", choices=("modern", "classic"), default="modern")
     parser.add_argument("--float", action="store_true", help="float on Hyprland at the requested physical size")
     args = parser.parse_args()
     idle = collect(args.idle_seconds)
     env = os.environ.copy()
     env["MATRIX_WINDOW_SIZE"] = args.size
     env["MATRIX_BENCHMARK"] = "1"
-    process = subprocess.Popen([args.binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen([args.binary, "--type", args.type], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
         time.sleep(3)
         if args.float:
@@ -139,6 +140,7 @@ def main():
             _, stderr = process.communicate()
     report = {
         "binary": args.binary,
+        "type": args.type,
         "requested_size": args.size,
         "observed_window": geometry,
         "seconds": args.seconds,

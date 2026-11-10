@@ -1,10 +1,12 @@
 //! Native copies of the reference WebGPU bloom, palette, and end passes.
 
+use crate::RainType;
 use wgpu::util::DeviceExt;
 
 const LEVELS: usize = 4;
 const BLOOM_SIZE: f32 = 0.4;
 const BLOOM_STRENGTH: f32 = 0.7;
+const CLASSIC_BLOOM_STRENGTH: f32 = 0.55;
 
 struct BloomLevel {
     width: u32,
@@ -51,6 +53,7 @@ impl ReferencePost {
         time_buffer: &wgpu::Buffer,
         primary: &wgpu::TextureView,
         high_pass: &wgpu::TextureView,
+        rain_type: RainType,
     ) -> Self {
         let shader = |label: &'static str, source: &'static str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -124,9 +127,13 @@ impl ReferencePost {
             "Reference vertical blur settings",
             bytemuck::cast_slice(&[2.0_f32, 0.0, 0.0, 1.0]),
         );
+        let bloom_strength = match rain_type {
+            RainType::Modern => BLOOM_STRENGTH,
+            RainType::Classic => CLASSIC_BLOOM_STRENGTH,
+        };
         let combine_config = uniform(
             "Reference bloom settings",
-            bytemuck::cast_slice(&[LEVELS as f32, BLOOM_STRENGTH]),
+            bytemuck::cast_slice(&[LEVELS as f32, bloom_strength]),
         );
         let palette_config = uniform(
             "Reference palette settings",
@@ -548,6 +555,7 @@ mod tests {
             &resources.time_buffer,
             resources.primary_view(),
             resources.high_pass_view(),
+            RainType::Modern,
         );
         let final_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Reference post test presentation"),
@@ -634,6 +642,7 @@ mod tests {
             &resources.time_buffer,
             resources.primary_view(),
             resources.high_pass_view(),
+            RainType::Modern,
         );
         let output = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Native comparison output"),

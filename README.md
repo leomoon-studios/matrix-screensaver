@@ -1,6 +1,6 @@
 # Matrix Screensaver
 
-A native Rust Matrix 3D animation for Omarchy. It opens a resizable GPU window and renders the copied reference rain, bloom, and palette pipeline. Screensaver and idle integration are still planned.
+A native Rust Matrix animation for Omarchy, with modern 3D and classic 2D rain. It opens a resizable GPU window and renders the copied reference rain, bloom, and palette pipeline. Screensaver and idle integration are still planned.
 
 ## Build and run
 
@@ -24,15 +24,15 @@ MATRIX_WINDOW_SIZE=720x1280 cargo run
 MATRIX_WINDOW_SIZE=1024x1024 cargo run
 ```
 
-The default renders internally at 50% of the window's physical size and targets 30 FPS. This setting added about 3–4 W of GPU board power over idle in the single-monitor benchmark. To use the reference's 75% internal scale and 60 FPS target:
+The default `--type modern` renders the 3D effect internally at 50% of the window's physical size and targets 30 FPS. This setting added about 3–4 W of GPU board power over idle in the single-monitor benchmark. Run `--type classic` for the flat Matrix rain with a black, staggered startup. For a closer classic reference comparison, use `./target/release/matrix-screensaver --type classic --fps 60 --render-scale 0.75`. To use the 3D reference's 75% internal scale and 60 FPS target:
 
 ```bash
 ./target/release/matrix-screensaver --fps 60 --render-scale 0.75
 ```
 
-Build first with `cargo build --release`. Override either setting with `--render-scale 0.25..1` and `--fps 1..60`; for example, `./target/release/matrix-screensaver --fps 60 --render-scale 1` uses full internal resolution. Run `./target/release/matrix-screensaver --help` for usage. The `MATRIX_RENDER_SCALE` and `MATRIX_FPS` environment variables remain supported for existing scripts; command-line values take precedence. Integrated graphics are supported when the driver provides a compatible adapter. The app exits with a clear error on a CPU software adapter because that path has not met the screensaver's low-power target.
+Build first with `cargo build --release`. Select the effect with `--type modern|classic`; override either quality setting with `--render-scale 0.25..1` and `--fps 1..60`; for example, `./target/release/matrix-screensaver --fps 60 --render-scale 1` uses full internal resolution. Run `./target/release/matrix-screensaver --help` for usage. The `MATRIX_RENDER_SCALE` and `MATRIX_FPS` environment variables remain supported for existing scripts; command-line values take precedence. Integrated graphics are supported when the driver provides a compatible adapter. The app exits with a clear error on a CPU software adapter because that path has not met the screensaver's low-power target.
 
-For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver`. It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
+For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver --type classic` (or `--type modern`). It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 
 For two connected Hyprland monitors, run `python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60`. It starts one instance per monitor and measures both simultaneously. The current default is the measured 30 FPS preset.
 

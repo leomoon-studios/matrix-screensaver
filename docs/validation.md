@@ -100,3 +100,28 @@ The DP-2 monitor was switched off for eight seconds using Hyprland DPMS while Ma
 Live captures were inspected after resizing 1280 × 720 → approximately 3802 × 2035 → 1280 × 720. The image refilled each surface without a stale target, crop, or stretch. Falling streams, large near glyphs, dim distant glyphs, bright heads, darkening trails, and bloom remained visible after the final resize. The 50% internal scale softens small glyph edges and bloom detail compared with the reference's 75% scale. That is the accepted quality tradeoff for the measured low-power default; `MATRIX_RENDER_SCALE=0.75 MATRIX_FPS=60` restores the earlier presentation setting.
 
 The final default was also measured twice for 60 seconds at 1280 × 720 physical pixels on the scale-1.6 display. It held 30.0–30.1 FPS in all twelve 10-second reports, with 95th-percentile render-submission intervals of 33.55–33.83 ms. Each run used 208 MiB of process GPU allocation and about 155 MiB of resident RAM; process CPU averaged 2.4–2.6% of one core. Idle board power averaged 16.7–16.8 W and running power 18.4 W, an increase of 1.6–1.7 W in this session. The two earlier 60-second large-window low-power runs in the single-monitor comparison measured 3.2–4.1 W over idle. The historical pre-3C build did not have FPS or interval logging; its process GPU, CPU, RAM, GPU utilization, and board-power measurements are available above.
+
+## 3D and classic 2D type check
+
+On 2026-11-09, the release binary was launched at a verified 1280 × 720 physical window on the scale-1.6 RTX 3060 display. Each type ran for 60 seconds at the default 30 FPS and 50% render scale, with a separate 5-second idle sample. The benchmark script accepts `--type` and reports the observed physical window size.
+
+| 60-second run | Modern | Classic |
+| --- | ---: | ---: |
+| Measured FPS, six 10-second reports | 30.0–30.1 | 30.0–30.1 |
+| 95th percentile frame interval | 33.46–33.52 ms | 33.46–33.50 ms |
+| Process CPU, run mean | 2.1% of one core | 2.0% |
+| Resident RAM, run mean | 155.7 MiB | 155.7 MiB |
+| Process GPU allocation | 208 MiB | 208 MiB |
+| Board power, idle → run mean | 32.9 → 34.2 W | 32.8 → 34.0 W |
+| GPU utilization, run mean | 36.3% | 37.2% |
+
+Both types share the 80×80 state and post-processing targets, which explains their equal measured GPU allocation; classic draws one six-vertex quad in place of modern's 38,400 vertices. The separate idle samples had substantial background GPU activity (about 39% utilization), and each run had brief board-power spikes near 50 W, so the small mean differences are not evidence of a stable power advantage for either type. Frame rate and process memory were stable.
+
+These measurements preceded a classic-only bloom-strength adjustment from 0.7 to 0.55. The change alters a uniform value and allocates no additional resources; a new 1280 × 720 live capture was inspected after the adjustment, and the full test suite and release build passed. The 60-second performance numbers above apply to the original 0.7 classic setting.
+
+Classic frames were captured at startup, during reveal, and after reveal at 1280 × 720 and at a requested 3840 × 2160 physical window. A GPU readback test also verified that the first frame is black, that more cells activate by 10 seconds, and that resizing during the intro retains the state. The native mid-intro image has flat columns, downward bright heads, green fading trails, and black background like the supplied capture. A direct headless Chromium capture of the hosted classic page was also inspected with `suppressWarnings=true`; the native image has noticeably stronger bloom and grain at comparable steady state, so a pixel-level visual match is not claimed. Different capture timing and graphics backends also limit a direct frame comparison. The 4K floating window extended 73 logical pixels past the monitor's left edge, so its screenshots cover the visible portion. Modern retained its prior geometry and post-processing path, and the existing GPU tests passed.
+
+```bash
+python scripts/benchmark.py target/release/matrix-screensaver --type classic --seconds 60 --idle-seconds 5 --float --size 1280x720
+python scripts/benchmark.py target/release/matrix-screensaver --type modern --seconds 60 --idle-seconds 5 --float --size 1280x720
+```
