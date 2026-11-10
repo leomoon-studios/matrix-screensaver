@@ -1,7 +1,0 @@
-self-hosted-runner:
-  labels:
-    - gpu
-    - interactive
-    - nvidia
-    - wayland
-    - x11

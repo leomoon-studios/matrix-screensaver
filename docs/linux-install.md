@@ -7,6 +7,10 @@ GitHub workflow is configured to build on Ubuntu 24.04, giving any artifact
 from that run its glibc baseline. Local builds use the builder's own glibc
 baseline. CPU-only software rendering is rejected.
 
+The GitHub workflow verifies the Linux build and archive structure. Rendering,
+input dismissal, monitor behavior, idle integration, and locking are manual
+tests performed on the target desktop.
+
 On the local x86_64 build, `ldd` lists `libc.so.6`, `libm.so.6`, and
 `libgcc_s.so.1`. At run time, the selected display backend also needs its
 Wayland or X11 client libraries and keyboard libraries; Vulkan rendering

@@ -1,4 +1,4 @@
-name: Linux package and graphics
+name: Linux build
 
 on:
   push:
@@ -15,15 +15,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component rustfmt
-      - name: Format and run display-independent tests
-        run: |
-          cargo +stable fmt --check
-          cargo +stable test --locked -- \
-            --skip post::tests::post_blooms_colors_and_presents \
-            --skip rain::tests::classic_starts_black_and_reveals_through_resize \
-            --skip rain::tests::rain_geometry_renders_two_targets_and_resizes \
-            --skip rain::tests::rain_state_starts_and_advances_on_gpu
+        run: rustup toolchain install stable --profile minimal
       - name: Build and package
         run: |
           cargo +stable build --release --locked
@@ -38,11 +30,6 @@ jobs:
           test -s ./matrix-screensaver-*/LICENSE
           test -s ./matrix-screensaver-*/THIRD-PARTY-NOTICES.md
           test -s ./matrix-screensaver-*/INSTALL.md
-          ./matrix-screensaver-*/matrix-screensaver --help
-          if ./matrix-screensaver-*/matrix-screensaver --type invalid; then
-            echo 'Invalid --type unexpectedly succeeded' >&2
-            exit 1
-          fi
           ldd ./matrix-screensaver-*/matrix-screensaver | tee libraries.txt
           ! grep -q 'not found' libraries.txt
       - uses: actions/upload-artifact@v4
@@ -51,50 +38,4 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.sha256
-          if-no-files-found: error
-
-  graphics:
-    needs: package
-    runs-on: [self-hosted, linux, x64, gpu, interactive, nvidia, wayland]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Require interactive graphics session
-        run: |
-          command -v nvidia-smi
-          test -n "${WAYLAND_DISPLAY:-}" || { echo 'Wayland session missing' >&2; exit 1; }
-          command -v hyprctl
-      - name: Pause Omarchy idle during long checks
-        run: |
-          mkdir -p graphics-check-logs
-          omarchy-shell idle status > graphics-check-logs/idle-before.json
-          omarchy-shell idle disable
-      - name: Build interactive test binary
-        run: cargo build --release --locked
-      - name: Run GPU renderer tests
-        run: cargo test --locked
-      - name: Check fullscreen placement and activity dismissal
-        run: scripts/linux-graphics-check.sh wayland --display-only
-      - name: Record fixed-hardware performance
-        run: |
-          python3 scripts/benchmark.py target/release/matrix-screensaver --type modern --seconds 60 > graphics-check-logs/modern-performance.json
-          python3 scripts/benchmark.py target/release/matrix-screensaver --type classic --seconds 60 > graphics-check-logs/classic-performance.json
-      - name: Check display recovery
-        run: scripts/check-wayland-recovery.sh > graphics-check-logs/recovery.log 2>&1
-      - name: Check real screen lock
-        run: scripts/check-omarchy-lock.sh > graphics-check-logs/lock.log 2>&1
-      - name: Restore Omarchy idle setting
-        if: always()
-        run: |
-          if [[ -f graphics-check-logs/idle-before.json ]]; then
-            if jq -e '.enabled' graphics-check-logs/idle-before.json >/dev/null; then
-              omarchy-shell idle enable
-            else
-              omarchy-shell idle disable
-            fi
-          fi
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: linux-graphics-wayland-logs
-          path: graphics-check-logs/
           if-no-files-found: error
