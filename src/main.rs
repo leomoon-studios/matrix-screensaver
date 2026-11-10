@@ -9,6 +9,7 @@ use winit::{
     event::{ElementState, MouseScrollDelta, TouchPhase, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle},
     monitor::MonitorHandle,
+    platform::wayland::WindowAttributesExtWayland,
     window::{Fullscreen, Window, WindowAttributes, WindowId},
 };
 
@@ -129,10 +130,17 @@ fn main() {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "Usage: matrix-screensaver [--screensaver] [--type modern|classic] [--fps 1..60] [--render-scale 0.25..1]\n\n--screensaver opens full-screen on each monitor and exits on input.\nDefaults: --type modern --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
+            "Usage: matrix-screensaver [--screensaver] [--type modern|classic] [--fps 1..60] [--render-scale 0.25..1] [--app-id ID]\n\n--screensaver opens full-screen on each monitor and exits on input.\n--app-id sets the Wayland application ID for idle-manager integration.\nDefaults: --type modern --fps 30 --render-scale 0.5\nEnvironment: MATRIX_FPS and MATRIX_RENDER_SCALE remain supported; CLI values take precedence."
         );
         return;
     }
+    let (arguments, app_id) = match split_app_id(arguments) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("matrix-screensaver: {error}. Run --help for usage.");
+            std::process::exit(2);
+        }
+    };
     let quality =
         match Quality::from_environment().and_then(|quality| quality.with_arguments(arguments)) {
             Ok(quality) => quality,
@@ -150,11 +158,43 @@ fn main() {
         windows: Vec::new(),
         next_monitor_poll: Instant::now(),
         failed: false,
+        app_id,
     };
     event_loop.run_app(&mut app).expect("event loop error");
     if app.failed {
         std::process::exit(1);
     }
+}
+
+fn split_app_id(args: Vec<String>) -> Result<(Vec<String>, Option<String>), String> {
+    let mut remaining = Vec::new();
+    let mut app_id = None;
+    let mut args = args.into_iter();
+    while let Some(argument) = args.next() {
+        let value = if argument == "--app-id" {
+            Some(args.next().ok_or("--app-id needs a value")?)
+        } else {
+            argument.strip_prefix("--app-id=").map(str::to_owned)
+        };
+        if let Some(value) = value {
+            if value.is_empty()
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+            {
+                return Err(
+                    "--app-id must contain only letters, digits, dots, dashes, or underscores"
+                        .to_owned(),
+                );
+            }
+            if app_id.replace(value).is_some() {
+                return Err("--app-id may only be set once".to_owned());
+            }
+        } else {
+            remaining.push(argument);
+        }
+    }
+    Ok((remaining, app_id))
 }
 
 fn initial_size() -> PhysicalSize<u32> {
@@ -176,6 +216,7 @@ struct App {
     windows: Vec<ScreenWindow>,
     next_monitor_poll: Instant,
     failed: bool,
+    app_id: Option<String>,
 }
 
 impl ApplicationHandler for App {
@@ -317,6 +358,9 @@ impl App {
             attrs = attrs
                 .with_inner_size(self.initial_size)
                 .with_resizable(true);
+        }
+        if let Some(app_id) = &self.app_id {
+            attrs = attrs.with_name(app_id.clone(), app_id.clone());
         }
         let window = match event_loop.create_window(attrs) {
             Ok(window) => Arc::new(window),
@@ -862,6 +906,26 @@ fn next_frame_deadline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wayland_app_id_is_extracted_and_validated() {
+        let (remaining, app_id) = split_app_id(
+            [
+                "--screensaver",
+                "--app-id=org.omarchy.screensaver",
+                "--type",
+                "classic",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(app_id.as_deref(), Some("org.omarchy.screensaver"));
+        assert_eq!(remaining, ["--screensaver", "--type", "classic"]);
+        assert!(split_app_id(vec!["--app-id".to_owned()]).is_err());
+        assert!(split_app_id(vec!["--app-id=bad id".to_owned()]).is_err());
+        assert!(split_app_id(vec!["--app-id=a".to_owned(), "--app-id=b".to_owned()]).is_err());
+    }
 
     #[test]
     fn command_line_quality_overrides_defaults_and_rejects_bad_values() {

@@ -34,6 +34,8 @@ Build first with `cargo build --release`. Select the effect with `--type modern|
 
 To try the full-screen mode, run `./target/release/matrix-screensaver --screensaver --type modern` (or `--type classic`). It creates one window per active monitor and exits on a key press, mouse click, scroll, touch, or pointer movement past a small threshold. A session idle launcher should also stop the process on resume or lock; installation of that launcher is planned in Task 5. The binary does not lock the session. Temporary-output add and removal passed on the tested Hyprland session; physical unplug and suspend still need validation. See [Step 4 validation](docs/validation.md#step-4-linux-screensaver-mode).
 
+For an Omarchy launcher, `--app-id org.omarchy.screensaver` gives the Wayland windows the class that its idle service tracks. This sets the window class only; the Task 5 adapter must still launch the binary and stop it on resume or lock.
+
 For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver --type classic` (or `--type modern`). It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 
 For two connected Hyprland monitors, run `python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60`. It starts one instance per monitor and measures both simultaneously. The current default is the measured 30 FPS preset.
