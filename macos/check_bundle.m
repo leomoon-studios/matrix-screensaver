@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <QuartzCore/CAMetalLayer.h>
 #import <objc/runtime.h>
 #import <ScreenSaver/ScreenSaver.h>
 
@@ -20,7 +21,19 @@ int main(int argc, const char *argv[]) {
             fprintf(stderr, "principal class is not a ScreenSaverView\n");
             return 1;
         }
-        printf("loaded %s (%s)\n", class_getName(principal), bundle.bundleIdentifier.UTF8String);
+        [NSApplication sharedApplication];
+        ScreenSaverView *view = [[principal alloc] initWithFrame:NSMakeRect(0, 0, 640, 360)
+                                                        isPreview:YES];
+        if (!view) {
+            fprintf(stderr, "could not instantiate the principal ScreenSaverView\n");
+            return 1;
+        }
+        if (![view.layer isKindOfClass:CAMetalLayer.class]) {
+            fprintf(stderr, "ScreenSaverView is not backed by CAMetalLayer\n");
+            return 1;
+        }
+        printf("loaded %s (%s) with CAMetalLayer backing\n", class_getName(principal),
+               bundle.bundleIdentifier.UTF8String);
     }
     return 0;
 }

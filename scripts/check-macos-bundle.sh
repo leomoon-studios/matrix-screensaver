@@ -24,7 +24,7 @@ done
 
 checker=$(mktemp -t matrix-saver-check.XXXXXX)
 trap 'rm -f "$checker"' EXIT
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework AppKit -framework ScreenSaver \
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework AppKit -framework QuartzCore -framework ScreenSaver \
     "$repo_root/macos/check_bundle.m" -o "$checker"
 "$checker" "$bundle"
 

@@ -50,19 +50,24 @@ static float MatrixRenderScale(void) {
 @property(nonatomic) void *matrixRenderer;
 @property(nonatomic, strong) CAMetalLayer *matrixLayer;
 @property(nonatomic) BOOL reportedRendererError;
+@property(nonatomic) BOOL matrixAnimationRunning;
 @end
 
 @implementation MatrixScreenSaverView
+
+- (CALayer *)makeBackingLayer {
+    return [CAMetalLayer layer];
+}
 
 - (instancetype)initWithFrame:(NSRect)frame isPreview:(BOOL)isPreview {
     self = [super initWithFrame:frame isPreview:isPreview];
     if (self) {
         self.animationTimeInterval = 1.0 / 30.0;
         self.wantsLayer = YES;
-        self.matrixLayer = [CAMetalLayer layer];
+        self.matrixLayer = (CAMetalLayer *)self.layer;
         self.matrixLayer.opaque = YES;
         self.matrixLayer.backgroundColor = NSColor.blackColor.CGColor;
-        self.layer = self.matrixLayer;
+        [self updateDrawableSize];
     }
     return self;
 }
@@ -106,11 +111,13 @@ static float MatrixRenderScale(void) {
 
 - (void)startAnimation {
     [super startAnimation];
+    self.matrixAnimationRunning = YES;
     [self createRendererIfNeeded];
     if (self.matrixRenderer) matrix_saver_set_paused(self.matrixRenderer, false);
 }
 
 - (void)stopAnimation {
+    self.matrixAnimationRunning = NO;
     if (self.matrixRenderer) {
         matrix_saver_set_paused(self.matrixRenderer, true);
         matrix_saver_destroy(self.matrixRenderer);
@@ -120,12 +127,18 @@ static float MatrixRenderScale(void) {
 }
 
 - (void)animateOneFrame {
+    if (!self.matrixAnimationRunning) return;
     [self createRendererIfNeeded];
     if (!self.matrixRenderer || self.reportedRendererError) return;
     if (matrix_saver_render(self.matrixRenderer) < 0) {
         NSLog(@"Matrix Screensaver stopped rendering: %s", matrix_saver_error(self.matrixRenderer));
         self.reportedRendererError = YES;
     }
+}
+
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    [self updateDrawableSize];
 }
 
 - (void)setFrameSize:(NSSize)newSize {
