@@ -438,6 +438,10 @@ impl App {
                 ))))
             };
         }
+        #[cfg(target_os = "windows")]
+        if self.quality.screensaver || self.preview.is_some() {
+            attrs = attrs.with_visible(false);
+        }
         let window = match event_loop.create_window(attrs) {
             Ok(window) => Arc::new(window),
             Err(error) => {
@@ -456,12 +460,35 @@ impl App {
             event_loop.owned_display_handle(),
             self.windows.first().map(|entry| &entry.renderer),
         )) {
-            Ok(renderer) => self.windows.push(ScreenWindow {
-                monitor,
-                renderer,
-                window,
-                dismissal: Dismissal::new(Instant::now()),
-            }),
+            Ok(mut renderer) => {
+                #[cfg(target_os = "windows")]
+                if self.quality.screensaver || self.preview.is_some() {
+                    match renderer.render() {
+                        Ok(RenderStatus::Presented) => {}
+                        Ok(RenderStatus::Skipped | RenderStatus::SurfaceLost) => {
+                            eprintln!(
+                                "Matrix Screensaver could not present its first frame while hidden"
+                            );
+                            self.failed = true;
+                            event_loop.exit();
+                            return;
+                        }
+                        Err(error) => {
+                            eprintln!("Matrix Screensaver first frame failed: {error}");
+                            self.failed = true;
+                            event_loop.exit();
+                            return;
+                        }
+                    }
+                    window.set_visible(true);
+                }
+                self.windows.push(ScreenWindow {
+                    monitor,
+                    renderer,
+                    window,
+                    dismissal: Dismissal::new(Instant::now()),
+                });
+            }
             Err(error) => {
                 eprintln!("Matrix Screensaver could not initialize its GPU renderer: {error}");
                 self.failed = true;
