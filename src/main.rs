@@ -122,6 +122,16 @@ fn main() {
             }
         };
     let event_loop = EventLoop::new().expect("failed to create the window event loop");
+    #[cfg(target_os = "windows")]
+    if let Some(parent) = preview {
+        let proxy = event_loop.create_proxy();
+        std::thread::spawn(move || {
+            while preview_size(parent).is_some() {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let _ = proxy.send_event(());
+        });
+    }
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut app = App {
@@ -202,6 +212,9 @@ struct App {
 }
 
 impl ApplicationHandler for App {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: ()) {
+        event_loop.exit();
+    }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.quality.screensaver {
             self.sync_monitors(event_loop);

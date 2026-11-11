@@ -19,3 +19,6 @@ winit = { version = "0.30.13", default-features = false, features = ["wayland", 
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
