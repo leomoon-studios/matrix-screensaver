@@ -55,6 +55,14 @@ jobs:
             exit 1
           fi
           grep -q -- '--color must be green, blue, red, yellow, purple, or orange' "$GITHUB_WORKSPACE/ci-output/invalid-color.log"
+      - name: Build Windows screensaver package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-windows.ps1
+          foreach ($file in @('Matrix Screensaver.scr', 'LICENSE', 'third-party-notices.md', 'windows-install.md')) {
+            if (-not (Test-Path -LiteralPath "dist/windows/$file")) { throw "Missing $file" }
+          }
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -63,4 +71,5 @@ jobs:
             ci-output/
             target/release/matrix-screensaver
             target/release/matrix-screensaver.exe
+            dist/windows/
           if-no-files-found: warn

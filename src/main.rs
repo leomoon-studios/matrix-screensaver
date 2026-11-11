@@ -3,6 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(any(target_os = "windows", test))]
+mod windows_host;
+
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesExtWayland;
 
@@ -27,8 +30,68 @@ const POINTER_DISMISS_DISTANCE: f64 = 8.0;
 const FOCUS_LOSS_GRACE: Duration = Duration::from_secs(1);
 const FOCUS_STARTUP_GRACE: Duration = Duration::from_secs(3);
 
+#[cfg(target_os = "windows")]
+fn windows_message(message: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_OK, MessageBoxW};
+    let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Matrix Screensaver".encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn preview_size(parent: std::num::NonZeroIsize) -> Option<PhysicalSize<u32>> {
+    use windows_sys::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{GetClientRect, IsWindow},
+    };
+    let hwnd = parent.get() as *mut std::ffi::c_void;
+    let mut rect = RECT::default();
+    if unsafe { IsWindow(hwnd) == 0 || GetClientRect(hwnd, &mut rect) == 0 } {
+        return None;
+    }
+    Some(PhysicalSize::new(
+        (rect.right - rect.left).max(0) as u32,
+        (rect.bottom - rect.top).max(0) as u32,
+    ))
+}
+
 fn main() {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    #[allow(unused_mut)]
+    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(target_os = "windows")]
+    let preview = {
+        let is_scr = std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                p.extension()
+                    .map(|e| e.to_string_lossy().eq_ignore_ascii_case("scr"))
+            })
+            .unwrap_or(false);
+        if is_scr {
+            match windows_host::parse(&arguments) {
+                Ok(windows_host::Mode::Fullscreen) => {
+                    arguments = vec!["--screensaver".into()];
+                    None
+                }
+                Ok(windows_host::Mode::Configure) => {
+                    windows_message("Matrix Screensaver has no configurable settings.");
+                    return;
+                }
+                Ok(windows_host::Mode::Preview(handle)) => {
+                    arguments.clear();
+                    Some(handle)
+                }
+                Err(error) => {
+                    windows_message(error);
+                    std::process::exit(2);
+                }
+            }
+        } else {
+            None
+        }
+    };
     if arguments
         .iter()
         .any(|argument| argument == "--help" || argument == "-h")
@@ -71,6 +134,8 @@ fn main() {
         app_id,
         started_at: Instant::now(),
         unfocused_since: None,
+        #[cfg(target_os = "windows")]
+        preview,
     };
     event_loop.run_app(&mut app).expect("event loop error");
     if app.failed {
@@ -132,6 +197,8 @@ struct App {
     app_id: Option<String>,
     started_at: Instant,
     unfocused_since: Option<Instant>,
+    #[cfg(target_os = "windows")]
+    preview: Option<std::num::NonZeroIsize>,
 }
 
 impl ApplicationHandler for App {
@@ -226,6 +293,19 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        #[cfg(target_os = "windows")]
+        if let Some(parent) = self.preview {
+            if let Some(size) = preview_size(parent) {
+                if let Some(entry) = self.windows.first() {
+                    if entry.window.inner_size() != size {
+                        let _ = entry.window.request_inner_size(size);
+                    }
+                }
+            } else {
+                event_loop.exit();
+                return;
+            }
+        }
         if self.quality.screensaver && !self.windows.is_empty() {
             if self.windows.iter().any(|entry| entry.window.has_focus()) {
                 self.unfocused_since = None;
@@ -324,6 +404,26 @@ impl App {
         #[cfg(target_os = "linux")]
         if let Some(app_id) = &self.app_id {
             attrs = attrs.with_name(app_id.clone(), app_id.clone());
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(parent) = self.preview {
+            use winit::raw_window_handle::{RawWindowHandle, Win32WindowHandle};
+            let Some(size) = preview_size(parent) else {
+                eprintln!("Matrix Screensaver: invalid preview window");
+                self.failed = true;
+                event_loop.exit();
+                return;
+            };
+            attrs = attrs
+                .with_decorations(false)
+                .with_position(PhysicalPosition::new(0, 0))
+                .with_inner_size(size);
+            // Windows supplied the parent; preview_size checked that it is still a window.
+            attrs = unsafe {
+                attrs.with_parent_window(Some(RawWindowHandle::Win32(Win32WindowHandle::new(
+                    parent,
+                ))))
+            };
         }
         let window = match event_loop.create_window(attrs) {
             Ok(window) => Arc::new(window),
@@ -443,8 +543,11 @@ impl Dismissal {
         }
         let Some(origin) = self.pointer_origin else {
             self.pointer_origin = Some(position);
+            #[cfg(target_os = "windows")]
+            return false;
             // Wayland may not send an initial position. After the startup
             // grace, the first motion is then the user's only activity.
+            #[cfg(not(target_os = "windows"))]
             return true;
         };
         let distance = (position.x - origin.x).hypot(position.y - origin.y);
@@ -455,6 +558,12 @@ impl Dismissal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn invalid_preview_handle_is_rejected() {
+        assert!(preview_size(std::num::NonZeroIsize::new(-1).unwrap()).is_none());
+    }
 
     #[test]
     fn wayland_app_id_is_extracted_and_validated() {
@@ -602,18 +711,24 @@ mod tests {
             start + Duration::from_millis(400),
             1.0
         ));
-        assert!(refocused.on_input(
-            pointer(100.0, 100.0),
-            start + Duration::from_millis(500),
-            1.0
-        ));
+        assert_eq!(
+            refocused.on_input(
+                pointer(100.0, 100.0),
+                start + Duration::from_millis(500),
+                1.0
+            ),
+            !cfg!(target_os = "windows")
+        );
 
         let mut no_initial_position = Dismissal::new(start);
-        assert!(no_initial_position.on_input(
-            pointer(100.0, 100.0),
-            start + Duration::from_millis(400),
-            1.0
-        ));
+        assert_eq!(
+            no_initial_position.on_input(
+                pointer(100.0, 100.0),
+                start + Duration::from_millis(400),
+                1.0
+            ),
+            !cfg!(target_os = "windows")
+        );
 
         for input in [
             DismissalInput::Key {

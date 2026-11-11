@@ -16,3 +16,6 @@ winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30.13", default-features = false, features = ["wayland", "x11", "rwh_06"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
