@@ -36,6 +36,7 @@ iconutil -c icns "$iconset" -o "$bundle/Contents/Resources/MatrixScreensaver.icn
 
 frameworks=(
     -framework AppKit
+    -framework Carbon
     -framework CoreFoundation
     -framework CoreGraphics
     -framework CoreServices
