@@ -63,6 +63,21 @@ jobs:
           foreach ($file in @('Matrix Screensaver.scr', 'matrix-screensaver.png', 'LICENSE', 'third-party-notices.md', 'windows-install.md')) {
             if (-not (Test-Path -LiteralPath "dist/windows/$file")) { throw "Missing $file" }
           }
+      - name: Package and verify Linux archive
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          scripts/package-linux.sh
+          cd "$RUNNER_TEMP"
+          cp "$GITHUB_WORKSPACE"/dist/*.tar.gz* .
+          sha256sum -c ./*.sha256
+          tar -xzf ./*.tar.gz
+          test -x ./matrix-screensaver-*/matrix-screensaver
+          test -s ./matrix-screensaver-*/LICENSE
+          test -s ./matrix-screensaver-*/THIRD-PARTY-NOTICES.md
+          test -s ./matrix-screensaver-*/INSTALL.md
+          ldd ./matrix-screensaver-*/matrix-screensaver | tee libraries.txt
+          ! grep -q 'not found' libraries.txt
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -73,6 +88,8 @@ jobs:
             target/release/matrix-screensaver.exe
             dist/windows/
             dist/windows/preview.png
+            dist/*.tar.gz
+            dist/*.sha256
           if-no-files-found: warn
   windows-graphics:
     if: github.event_name == 'workflow_dispatch'
