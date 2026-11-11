@@ -27,4 +27,19 @@ trap 'rm -f "$checker"' EXIT
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework AppKit -framework ScreenSaver \
     "$repo_root/macos/check_bundle.m" -o "$checker"
 "$checker" "$bundle"
+
+output=$(dirname "$bundle")
+shopt -s nullglob
+archives=("$output"/*.zip)
+if (( ${#archives[@]} != 1 )); then
+    echo "Expected one macOS ZIP archive in $output, found ${#archives[@]}." >&2
+    exit 1
+fi
+archive=${archives[0]}
+test -s "$archive.sha256"
+(
+    cd "$output"
+    shasum -a 256 -c "$(basename "$archive").sha256"
+)
+unzip -tq "$archive"
 echo "Bundle checks passed for: $architectures"

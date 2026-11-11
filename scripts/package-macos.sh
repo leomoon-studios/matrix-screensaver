@@ -85,6 +85,9 @@ codesign --force --deep --sign - "$bundle"
 archive="$output/matrix-screensaver-$version-macos.zip"
 rm -f "$archive" "$archive.sha256"
 ditto -c -k --sequesterRsrc --keepParent "$bundle" "$archive"
-shasum -a 256 "$archive" > "$archive.sha256"
+(
+    cd "$output"
+    shasum -a 256 "$(basename "$archive")" > "$(basename "$archive").sha256"
+)
 echo "Created $bundle"
 echo "Created $archive"
