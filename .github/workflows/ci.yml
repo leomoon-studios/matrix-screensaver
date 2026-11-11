@@ -124,6 +124,7 @@ jobs:
       - name: Run Windows graphics and host checks
         shell: pwsh
         run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-windows-settings.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-windows-preview.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-windows-fullscreen.ps1
           cargo +1.99.1 test --lib --locked -- --ignored --skip capture_native_frame

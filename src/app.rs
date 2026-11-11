@@ -83,7 +83,9 @@ pub fn run(host_mode: HostMode) {
                     None
                 }
                 Ok(windows_host::Mode::Configure) => {
-                    windows_message("Matrix Screensaver has no configurable settings.");
+                    if let Err(error) = windows_host::configure() {
+                        windows_message(&error);
+                    }
                     return;
                 }
                 Ok(windows_host::Mode::Preview(handle)) => {
@@ -120,14 +122,21 @@ pub fn run(host_mode: HostMode) {
         eprintln!("matrix-screensaver: --app-id is only supported on Linux Wayland.");
         std::process::exit(2);
     }
-    let quality =
-        match Quality::from_environment().and_then(|quality| quality.with_arguments(arguments)) {
-            Ok(quality) => quality,
-            Err(error) => {
-                eprintln!("matrix-screensaver: {error}. Run --help for usage.");
-                std::process::exit(2);
-            }
-        };
+    #[cfg(target_os = "windows")]
+    let base_quality = if host_mode == HostMode::WindowsScreenSaver {
+        Ok(windows_host::load_quality())
+    } else {
+        Quality::from_environment()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let base_quality = Quality::from_environment();
+    let quality = match base_quality.and_then(|quality| quality.with_arguments(arguments)) {
+        Ok(quality) => quality,
+        Err(error) => {
+            eprintln!("matrix-screensaver: {error}. Run --help for usage.");
+            std::process::exit(2);
+        }
+    };
     let event_loop = EventLoop::new().expect("failed to create the window event loop");
     #[cfg(target_os = "windows")]
     if let Some(parent) = preview {

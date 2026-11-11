@@ -1,3 +1,4 @@
+param([string]$AppDataDirectory)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21,7 +22,12 @@ $timer.Add_Tick({
     $form.Close()
 })
 $form.Add_Shown({
-    $script:previewProcess = Start-Process -FilePath $scr -ArgumentList @('/p', [string]$form.Handle.ToInt64()) -PassThru -WindowStyle Normal
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $scr
+    $info.Arguments = "/p $($form.Handle.ToInt64())"
+    $info.UseShellExecute = $false
+    if ($AppDataDirectory) { $info.EnvironmentVariables['APPDATA'] = $AppDataDirectory }
+    $script:previewProcess = [System.Diagnostics.Process]::Start($info)
     $timer.Start()
 })
 $form.ShowDialog() | Out-Null
