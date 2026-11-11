@@ -26,7 +26,6 @@ jobs:
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       tag: ${{ steps.metadata.outputs.tag }}
-      release_date: ${{ steps.metadata.outputs.release_date }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -48,11 +47,8 @@ jobs:
           [[ "$version" == "$package_version" ]] || { echo "Tag version $version does not match Cargo.toml $package_version" >&2; exit 1; }
           changelog_header="$(grep -E "^## $version \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$" CHANGELOG.md || true)"
           [[ -n "$changelog_header" ]] || { echo "CHANGELOG.md has no $version entry" >&2; exit 1; }
-          release_date="${changelog_header#*\(}"
-          release_date="${release_date%\)}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "release_date=$release_date" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux release build
@@ -176,25 +172,16 @@ jobs:
           pattern: matrix-screensaver-*-release-${{ github.sha }}
           path: release-assets
           merge-multiple: true
-      - name: Generate release notes with changelog and commits
+      - name: Generate release notes from commits
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="${{ needs.validate.outputs.version }}"
           tag="${{ needs.validate.outputs.tag }}"
           previous_tag="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
           commit_range="${previous_tag:+$previous_tag..}$tag"
           {
-            echo "Released: ${{ needs.validate.outputs.release_date }}"
-            echo
-            echo "## Changes"
-            awk -v version="$version" '
-              $0 ~ "^## " version " \\(" { active=1; next }
-              active && /^## / { exit }
-              active { print }
-            ' CHANGELOG.md
             echo "## Commits"
             while IFS= read -r commit_hash; do
               subject="$(git show -s --format=%s "$commit_hash")"
@@ -206,10 +193,6 @@ jobs:
                 printf -- '- %s ([`%s`](https://github.com/%s/commit/%s) by %s)\n' "$subject" "${commit_hash:0:7}" "$GITHUB_REPOSITORY" "$commit_hash" "$author_name"
               fi
             done < <(git rev-list "$commit_range")
-            echo
-            echo "## Downloads"
-            echo
-            echo "Linux, Windows, and macOS release builds and their SHA-256 checksums are attached below."
           } > release-notes.md
       - name: Create release and upload builds
         shell: bash
