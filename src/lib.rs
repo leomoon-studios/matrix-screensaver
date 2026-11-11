@@ -1,3 +1,4 @@
+pub mod app;
 mod gpu_layout;
 #[cfg(target_os = "macos")]
 mod macos_ffi;
@@ -5,6 +6,8 @@ mod post;
 mod rain;
 pub mod renderer;
 pub mod settings;
+#[cfg(any(target_os = "windows", test))]
+mod windows_host;
 
 pub use settings::{ColorTheme, Quality, RainType};
 

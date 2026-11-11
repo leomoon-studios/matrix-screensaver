@@ -7,6 +7,14 @@ description = "A native GPU Matrix rain screensaver"
 license = "MIT"
 publish = false
 
+[features]
+windows-saver-host = []
+
+[[bin]]
+name = "matrix-screensaver-scr"
+path = "src/bin/matrix-screensaver-scr.rs"
+required-features = ["windows-saver-host"]
+
 [lib]
 crate-type = ["rlib", "staticlib"]
 

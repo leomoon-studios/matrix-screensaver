@@ -27,6 +27,7 @@ pub struct Renderer {
     profile_queries: Option<wgpu::QuerySet>,
     profile_resolve: Option<wgpu::Buffer>,
     profile_readback: Option<wgpu::Buffer>,
+    console_diagnostics: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -43,6 +44,7 @@ impl Renderer {
         quality: Quality,
         display: OwnedDisplayHandle,
         shared: Option<&Renderer>,
+        console_diagnostics: bool,
     ) -> Result<Self, String> {
         let instance = shared.map_or_else(
             || {
@@ -56,7 +58,15 @@ impl Renderer {
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| format!("could not create a rendering surface: {error}"))?;
-        Self::new_for_surface(instance, surface, window.inner_size(), quality, shared).await
+        Self::new_for_surface(
+            instance,
+            surface,
+            window.inner_size(),
+            quality,
+            shared,
+            console_diagnostics,
+        )
+        .await
     }
 
     /// Accepts a surface created by a native host. The host owns the window or view
@@ -67,6 +77,7 @@ impl Renderer {
         size: PhysicalSize<u32>,
         quality: Quality,
         shared: Option<&Renderer>,
+        console_diagnostics: bool,
     ) -> Result<Self, String> {
         let adapter = if let Some(renderer) = shared {
             renderer.adapter.clone()
@@ -84,7 +95,8 @@ impl Renderer {
         if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
             return Err("only a software graphics adapter was found; this GPU renderer would consume substantial CPU time".to_owned());
         }
-        let profile_requested = std::env::var("MATRIX_PROFILE_GPU").is_ok_and(|value| value == "1");
+        let profile_requested = console_diagnostics
+            && std::env::var("MATRIX_PROFILE_GPU").is_ok_and(|value| value == "1");
         let profile_features =
             wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
         let profile_supported = adapter.features().contains(profile_features);
@@ -165,7 +177,7 @@ impl Renderer {
                 mapped_at_creation: false,
             })
         });
-        if profile_requested && !profile_supported {
+        if console_diagnostics && profile_requested && !profile_supported {
             eprintln!("GPU timestamp queries are unsupported on this adapter");
         }
         let rain = rain::RainResources::new_for_type(
@@ -189,12 +201,14 @@ impl Renderer {
             quality.render_scale,
         );
 
-        eprintln!(
-            "GPU ready: {} ({:?}; bundled matrix glyph atlas: {} bytes)",
-            adapter.get_info().name,
-            adapter.get_info().backend,
-            MATRIXCODE_MSDF.len()
-        );
+        if console_diagnostics {
+            eprintln!(
+                "GPU ready: {} ({:?}; bundled matrix glyph atlas: {} bytes)",
+                adapter.get_info().name,
+                adapter.get_info().backend,
+                MATRIXCODE_MSDF.len()
+            );
+        }
 
         Ok(Self {
             rain,
@@ -212,15 +226,16 @@ impl Renderer {
             quality,
             occluded: false,
             occluded_at: None,
-            benchmark_since: std::env::var("MATRIX_BENCHMARK")
-                .is_ok_and(|value| value == "1")
-                .then(Instant::now),
+            benchmark_since: (console_diagnostics
+                && std::env::var("MATRIX_BENCHMARK").is_ok_and(|value| value == "1"))
+            .then(Instant::now),
             benchmark_frames: 0,
             benchmark_last_frame: None,
             benchmark_intervals_ms: Vec::new(),
             profile_queries,
             profile_resolve,
             profile_readback,
+            console_diagnostics,
         })
     }
 
@@ -425,6 +440,9 @@ impl Renderer {
     }
 
     fn read_gpu_profile(&self) {
+        if !self.console_diagnostics {
+            return;
+        }
         let Some(readback) = &self.profile_readback else {
             return;
         };

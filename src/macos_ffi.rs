@@ -78,7 +78,7 @@ pub extern "C" fn matrix_saver_create(
         };
         match surface {
             Ok(surface) => match pollster::block_on(Renderer::new_for_surface(
-                instance, surface, size, quality, None,
+                instance, surface, size, quality, None, false,
             )) {
                 Ok(renderer) => host.renderer = Some(renderer),
                 Err(error) => host.set_error(error),

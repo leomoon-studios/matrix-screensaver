@@ -59,6 +59,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          cargo +1.99.1 build --release --locked --bin matrix-screensaver-scr --features windows-saver-host
           ./scripts/package-windows.ps1
           foreach ($file in @('Matrix Screensaver.scr', 'matrix-screensaver.png', 'LICENSE', 'third-party-notices.md', 'windows-install.md')) {
             if (-not (Test-Path -LiteralPath "dist/windows/$file")) { throw "Missing $file" }
@@ -117,7 +118,8 @@ jobs:
       - name: Build Windows screensaver
         shell: pwsh
         run: |
-          cargo +1.99.1 build --release --locked
+          cargo +1.99.1 build --release --locked --bin matrix-screensaver
+          cargo +1.99.1 build --release --locked --bin matrix-screensaver-scr --features windows-saver-host
           ./scripts/package-windows.ps1
       - name: Run Windows graphics and host checks
         shell: pwsh
