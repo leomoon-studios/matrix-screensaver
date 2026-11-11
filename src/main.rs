@@ -460,9 +460,10 @@ impl App {
             event_loop.owned_display_handle(),
             self.windows.first().map(|entry| &entry.renderer),
         )) {
-            Ok(mut renderer) => {
+            Ok(renderer) => {
                 #[cfg(target_os = "windows")]
                 if self.quality.screensaver || self.preview.is_some() {
+                    let mut renderer = renderer;
                     match renderer.render() {
                         Ok(RenderStatus::Presented) => {}
                         Ok(RenderStatus::Skipped | RenderStatus::SurfaceLost) => {
@@ -481,6 +482,13 @@ impl App {
                         }
                     }
                     window.set_visible(true);
+                    self.windows.push(ScreenWindow {
+                        monitor,
+                        renderer,
+                        window,
+                        dismissal: Dismissal::new(Instant::now()),
+                    });
+                    return;
                 }
                 self.windows.push(ScreenWindow {
                     monitor,
