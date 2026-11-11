@@ -2,6 +2,7 @@ name: Cross-platform checks
 
 on:
   push:
+    tags-ignore: ["v*.*.*"]
   pull_request:
   workflow_dispatch:
 
