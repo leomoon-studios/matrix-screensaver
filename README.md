@@ -12,6 +12,31 @@ rustup default stable
 cargo run
 ```
 
+## Options
+
+| Setting | Values | Default | Description |
+|---|---|---|---|
+| Effect | `modern`, `classic` | `modern` | Selects perspective 3D rain or flat 2D rain. |
+| Color | `green`, `blue`, `red`, `yellow`, `purple`, `orange` | `green` | Changes the rain, glow, and bright cursor palette. |
+| Frame rate | `1` through `60` FPS | `30` | Higher values produce smoother motion and use more GPU power. |
+| Render scale | `0.25` through `1` | `0.5` | Controls internal resolution. Higher values are sharper and require more GPU work. |
+
+On Linux, configure these settings with command-line options:
+
+```bash
+matrix-screensaver \
+  --type modern \
+  --color green \
+  --fps 30 \
+  --render-scale 0.5
+```
+
+Use `--screensaver` to open full-screen windows on every active monitor. Wayland idle-manager integrations can also use `--app-id ID` to select the application ID. Run `matrix-screensaver --help` for the complete command-line usage.
+
+The packaged Windows and macOS screensavers provide these four visual settings through their native configuration interfaces, so normal users do not need command-line options. On Windows, open **Screen Saver Settings**, select Matrix Screensaver, and choose **Settings**. On macOS, select Matrix Screensaver under **System Settings > Screen Saver**, then open **Options**. Both interfaces let you choose the effect, color, frame rate, and render scale, and save those choices for later previews and full-screen runs.
+
+## Rendering and development
+
 The project enables Wayland and X11 backends in `winit`; on Omarchy it will use the Wayland session. It requests a native `wgpu` adapter and reports a readable failure if no compatible GPU surface or device is available.
 
 The glyph atlas and WGSL shaders are compiled into the executable. Running the binary does not fetch assets or require a browser, network connection, or working-directory-relative asset path. The active settings and GPU resource formats are documented in [renderer details](docs/renderer.md).
