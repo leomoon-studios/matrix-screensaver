@@ -40,7 +40,7 @@ Resizing recreates targets and updates the scene while preserving animation stat
 
 The host calls `resize` when its backing pixel size changes, `render` on a frame tick, and `pause`/`resume` when animation is suspended. `RenderStatus::SurfaceLost` asks the host to create another surface and call `replace_surface`. `stop` consumes the renderer and releases its resources. The standalone `winit` host uses `new_for_window` and `recreate_surface_for_window` as conveniences. Windows and macOS screensaver hosts are separate later steps.
 
-The standalone host selects Vulkan or GL on Linux, Direct3D 12 on Windows, and Metal on macOS. A supplied native surface must be compatible with its instance and adapter.
+The standalone host selects Vulkan or GL on Linux, Direct3D 12 on Windows, and Metal on macOS. A supplied native surface must be compatible with its instance and adapter. The macOS ScreenSaver bundle gives the renderer a `CAMetalLayer` through a small C ABI. Each system-created `ScreenSaverView` owns one renderer, supplies Retina pixel dimensions on resize, pauses it with `stopAnimation`, and destroys it before the view is released.
 
 ## Automated checks
 

@@ -63,6 +63,20 @@ jobs:
           foreach ($file in @('Matrix Screensaver.scr', 'matrix-screensaver.png', 'LICENSE', 'third-party-notices.md', 'windows-install.md')) {
             if (-not (Test-Path -LiteralPath "dist/windows/$file")) { throw "Missing $file" }
           }
+      - name: Build and validate macOS screensaver bundle
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          export MATRIX_RUST_TOOLCHAIN=+1.99.1
+          if [ "$RUNNER_ARCH" = ARM64 ]; then
+            export MATRIX_MACOS_ARCHS='arm64 x86_64'
+            export MATRIX_EXPECT_MACOS_ARCHS='arm64 x86_64'
+          else
+            export MATRIX_MACOS_ARCHS=x86_64
+            export MATRIX_EXPECT_MACOS_ARCHS=x86_64
+          fi
+          scripts/package-macos.sh
+          scripts/check-macos-bundle.sh
       - name: Package and verify Linux archive
         if: runner.os == 'Linux'
         run: |
@@ -88,6 +102,7 @@ jobs:
             target/release/matrix-screensaver.exe
             dist/windows/
             dist/windows/preview.png
+            dist/macos/
             dist/*.tar.gz
             dist/*.sha256
           if-no-files-found: warn

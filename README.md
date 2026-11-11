@@ -40,6 +40,8 @@ For Omarchy, the tested user-owned `leomoon.idle` clone launches `--screensaver 
 
 For archive installation and session-specific Omarchy, hypridle, swayidle, and X11 setup, see the [Linux installation guide](docs/linux-install.md). Xwayland multi-monitor placement is currently not validated as an X11 integration.
 
+On macOS, build the native universal ScreenSaver bundle with `scripts/package-macos.sh`. Install `dist/macos/Matrix Screensaver.saver` through Finder or copy it into `~/Library/Screen Savers/`, then select it in System Settings. The system owns previews, displays, input dismissal, and authentication. See the [macOS installation guide](docs/macos-install.md) and [macOS test checklist](docs/macos-testing.md).
+
 For a 60-second NVIDIA benchmark, build the release binary and run `python scripts/benchmark.py target/release/matrix-screensaver --type classic` (or `--type modern`). It samples idle and running CPU and GPU counters and process memory, and enables 10-second FPS and frame-interval reports. On Hyprland, add `--float --size 1280x720` to measure that physical window size; otherwise tiling can override the requested size. See [validation results](docs/validation.md).
 
 For two connected Hyprland monitors, run `python scripts/benchmark_dual.py target/release/matrix-screensaver --seconds 60`. It starts one instance per monitor and measures both simultaneously. The current default is the measured 30 FPS preset.

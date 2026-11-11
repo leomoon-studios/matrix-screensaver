@@ -7,6 +7,9 @@ description = "A native GPU Matrix rain screensaver"
 license = "MIT"
 publish = false
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 image = { version = "0.25.9", default-features = false, features = ["png"] }
