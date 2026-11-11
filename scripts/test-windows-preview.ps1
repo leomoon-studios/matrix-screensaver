@@ -13,6 +13,7 @@ $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 5000
 $timer.Add_Tick({
     $timer.Stop()
+    $script:previewAliveBeforeHostClose = $script:previewProcess -and -not $script:previewProcess.HasExited
     $bmp = New-Object System.Drawing.Bitmap(640,360)
     $graphics = [System.Drawing.Graphics]::FromImage($bmp)
     $graphics.CopyFromScreen($form.PointToScreen([System.Drawing.Point]::Empty), [System.Drawing.Point]::Empty, $form.ClientSize)
@@ -34,6 +35,9 @@ $form.ShowDialog() | Out-Null
 $hostHandle = $form.Handle
 $form.Dispose()
 Write-Output "Host window alive after dispose: $([PreviewWin32]::IsWindow($hostHandle))"
+if (-not $script:previewAliveBeforeHostClose) {
+    throw 'Preview process exited before its host window closed.'
+}
 if ($script:previewProcess -and -not $script:previewProcess.WaitForExit(5000)) {
     $script:previewProcess.Kill()
     throw 'Preview process did not exit when its host window closed.'

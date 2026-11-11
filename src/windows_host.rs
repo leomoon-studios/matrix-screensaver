@@ -58,6 +58,40 @@ fn settings_path() -> std::path::PathBuf {
 }
 
 #[cfg(target_os = "windows")]
+fn log_path() -> std::path::PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Matrix Screensaver")
+        .join("last-run.log")
+}
+
+#[cfg(target_os = "windows")]
+pub fn start_log(mode: &Mode) {
+    let path = log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, format!("started: {mode:?}\n"));
+}
+
+#[cfg(target_os = "windows")]
+pub fn append_log(message: &str) {
+    use std::io::Write;
+    let path = log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn choices(id: i32) -> Vec<String> {
     match id {
         10 => ["modern", "classic"].map(str::to_owned).to_vec(),

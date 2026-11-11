@@ -31,9 +31,14 @@ pub enum HostMode {
     WindowsScreenSaver,
 }
 const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(target_os = "windows")]
+const POINTER_STARTUP_GRACE: Duration = Duration::from_secs(2);
+#[cfg(not(target_os = "windows"))]
 const POINTER_STARTUP_GRACE: Duration = Duration::from_millis(300);
 const POINTER_DISMISS_DISTANCE: f64 = 8.0;
+#[cfg(not(target_os = "windows"))]
 const FOCUS_LOSS_GRACE: Duration = Duration::from_secs(1);
+#[cfg(not(target_os = "windows"))]
 const FOCUS_STARTUP_GRACE: Duration = Duration::from_secs(3);
 
 #[cfg(target_os = "windows")]
@@ -63,6 +68,12 @@ fn preview_size(parent: std::num::NonZeroIsize) -> Option<PhysicalSize<u32>> {
     ))
 }
 
+#[cfg(target_os = "windows")]
+fn preview_parent_exists(parent: std::num::NonZeroIsize) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
+    unsafe { IsWindow(parent.get() as *mut std::ffi::c_void) != 0 }
+}
+
 pub fn run(host_mode: HostMode) {
     #[allow(unused_mut)]
     let mut arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -79,16 +90,19 @@ pub fn run(host_mode: HostMode) {
         if is_scr {
             match windows_host::parse(&arguments) {
                 Ok(windows_host::Mode::Fullscreen) => {
+                    windows_host::start_log(&windows_host::Mode::Fullscreen);
                     arguments = vec!["--screensaver".into()];
                     None
                 }
                 Ok(windows_host::Mode::Configure) => {
+                    windows_host::start_log(&windows_host::Mode::Configure);
                     if let Err(error) = windows_host::configure() {
                         windows_message(&error);
                     }
                     return;
                 }
                 Ok(windows_host::Mode::Preview(handle)) => {
+                    windows_host::start_log(&windows_host::Mode::Preview(handle));
                     arguments.clear();
                     Some(handle)
                 }
@@ -142,7 +156,13 @@ pub fn run(host_mode: HostMode) {
     if let Some(parent) = preview {
         let proxy = event_loop.create_proxy();
         std::thread::spawn(move || {
-            while preview_size(parent).is_some() {
+            let mut missing_checks = 0;
+            while missing_checks < 20 {
+                if preview_parent_exists(parent) {
+                    missing_checks = 0;
+                } else {
+                    missing_checks += 1;
+                }
                 std::thread::sleep(Duration::from_millis(100));
             }
             let _ = proxy.send_event(());
@@ -158,7 +178,9 @@ pub fn run(host_mode: HostMode) {
         failed: false,
         #[cfg(target_os = "linux")]
         app_id,
+        #[cfg(not(target_os = "windows"))]
         started_at: Instant::now(),
+        #[cfg(not(target_os = "windows"))]
         unfocused_since: None,
         #[cfg(target_os = "windows")]
         preview,
@@ -222,7 +244,9 @@ struct App {
     failed: bool,
     #[cfg(target_os = "linux")]
     app_id: Option<String>,
+    #[cfg(not(target_os = "windows"))]
     started_at: Instant,
+    #[cfg(not(target_os = "windows"))]
     unfocused_since: Option<Instant>,
     #[cfg(target_os = "windows")]
     preview: Option<std::num::NonZeroIsize>,
@@ -231,6 +255,8 @@ struct App {
 
 impl ApplicationHandler for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: ()) {
+        #[cfg(target_os = "windows")]
+        windows_host::append_log("preview parent no longer exists");
         event_loop.exit();
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -260,12 +286,18 @@ impl ApplicationHandler for App {
                 .dismissal
                 .handles(&event, Instant::now(), scale_factor)
         {
+            #[cfg(target_os = "windows")]
+            windows_host::append_log("dismissed by input");
             event_loop.exit();
             return;
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                #[cfg(target_os = "windows")]
+                windows_host::append_log("window close requested");
+                event_loop.exit();
+            }
             WindowEvent::Destroyed => {
                 self.windows.remove(index);
                 if !self.quality.screensaver {
@@ -311,6 +343,8 @@ impl ApplicationHandler for App {
                         }
                     }
                     Err(error) => {
+                        #[cfg(target_os = "windows")]
+                        windows_host::append_log(&format!("rendering failed: {error}"));
                         eprintln!("Matrix Screensaver rendering failed: {error}");
                         self.failed = true;
                         event_loop.exit();
@@ -332,11 +366,9 @@ impl ApplicationHandler for App {
                         let _ = entry.window.request_inner_size(size);
                     }
                 }
-            } else {
-                event_loop.exit();
-                return;
             }
         }
+        #[cfg(not(target_os = "windows"))]
         if self.quality.screensaver && !self.windows.is_empty() {
             if self.windows.iter().any(|entry| entry.window.has_focus()) {
                 self.unfocused_since = None;
@@ -353,6 +385,7 @@ impl ApplicationHandler for App {
             self.next_monitor_poll = now + MONITOR_POLL_INTERVAL;
         }
         let mut next_wake = self.quality.screensaver.then_some(self.next_monitor_poll);
+        #[cfg(not(target_os = "windows"))]
         if let Some(since) = self.unfocused_since {
             let deadline = since + FOCUS_LOSS_GRACE;
             next_wake = Some(next_wake.map_or(deadline, |wake| wake.min(deadline)));
@@ -457,7 +490,7 @@ impl App {
             };
         }
         #[cfg(target_os = "windows")]
-        if self.quality.screensaver || self.preview.is_some() {
+        if self.quality.screensaver {
             attrs = attrs.with_visible(false);
         }
         let window = match event_loop.create_window(attrs) {
@@ -481,7 +514,7 @@ impl App {
         )) {
             Ok(renderer) => {
                 #[cfg(target_os = "windows")]
-                if self.quality.screensaver || self.preview.is_some() {
+                if self.quality.screensaver {
                     let mut renderer = renderer;
                     match renderer.render() {
                         Ok(RenderStatus::Presented) => {}
@@ -530,6 +563,7 @@ struct Dismissal {
     pointer_origin: Option<PhysicalPosition<f64>>,
 }
 
+#[derive(Debug)]
 enum DismissalInput {
     Key { pressed: bool, synthetic: bool },
     Modifier { active: bool },
@@ -584,16 +618,31 @@ impl Dismissal {
             WindowEvent::CursorMoved { position, .. } => DismissalInput::Pointer(*position),
             _ => return false,
         };
-        self.on_input(input, now, scale_factor)
+        #[cfg(target_os = "windows")]
+        let description = format!("{input:?}");
+        #[cfg(target_os = "windows")]
+        let elapsed_ms = now.duration_since(self.started_at).as_millis();
+        let dismissed = self.on_input(input, now, scale_factor);
+        #[cfg(target_os = "windows")]
+        if dismissed {
+            windows_host::append_log(&format!(
+                "dismissal input at {elapsed_ms} ms: {description}"
+            ));
+        }
+        dismissed
     }
 
     fn on_input(&mut self, input: DismissalInput, now: Instant, scale_factor: f64) -> bool {
+        #[cfg(target_os = "windows")]
+        let dismiss_non_key = now.duration_since(self.started_at) >= POINTER_STARTUP_GRACE;
+        #[cfg(not(target_os = "windows"))]
+        let dismiss_non_key = true;
         match input {
-            DismissalInput::Key { pressed, synthetic } => pressed && !synthetic,
-            DismissalInput::Modifier { active } => active,
-            DismissalInput::MouseButton { pressed } => pressed,
-            DismissalInput::Scroll { moved } => moved,
-            DismissalInput::Touch { started } => started,
+            DismissalInput::Key { pressed, synthetic } => pressed && !synthetic && dismiss_non_key,
+            DismissalInput::Modifier { active } => active && dismiss_non_key,
+            DismissalInput::MouseButton { pressed } => pressed && dismiss_non_key,
+            DismissalInput::Scroll { moved } => moved && dismiss_non_key,
+            DismissalInput::Touch { started } => started && dismiss_non_key,
             DismissalInput::Pointer(position) => self.pointer_moved(position, now, scale_factor),
         }
     }
@@ -605,7 +654,14 @@ impl Dismissal {
         scale_factor: f64,
     ) -> bool {
         if now.duration_since(self.started_at) < POINTER_STARTUP_GRACE {
-            self.pointer_origin = Some(position);
+            #[cfg(target_os = "windows")]
+            {
+                self.pointer_origin = None;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                self.pointer_origin = Some(position);
+            }
             return false;
         }
         let Some(origin) = self.pointer_origin else {
@@ -737,6 +793,7 @@ mod tests {
     #[test]
     fn screensaver_input_dismisses_after_real_activity() {
         let start = Instant::now();
+        let after_grace = start + POINTER_STARTUP_GRACE + Duration::from_millis(50);
         let mut dismissal = Dismissal::new(start);
         let pointer = |x, y| DismissalInput::Pointer(PhysicalPosition::new(x, y));
         assert!(!dismissal.on_input(pointer(100.0, 100.0), start, 1.0));
@@ -745,43 +802,44 @@ mod tests {
             start + Duration::from_millis(200),
             1.0
         ));
-        assert!(!dismissal.on_input(
-            pointer(200.0, 200.0),
-            start + Duration::from_millis(350),
-            1.0
-        ));
+        assert!(!dismissal.on_input(pointer(200.0, 200.0), after_grace, 1.0));
         assert!(!dismissal.on_input(
             pointer(203.0, 200.0),
-            start + Duration::from_millis(360),
+            after_grace + Duration::from_millis(10),
             1.0
         ));
         assert!(!dismissal.on_input(
             pointer(207.0, 200.0),
-            start + Duration::from_millis(370),
+            after_grace + Duration::from_millis(20),
             1.0
         ));
         assert!(dismissal.on_input(
             pointer(208.0, 200.0),
-            start + Duration::from_millis(380),
+            after_grace + Duration::from_millis(30),
             1.0
         ));
 
         let mut scaled = Dismissal::new(start);
         assert!(!scaled.on_input(pointer(0.0, 0.0), start, 2.0));
-        assert!(!scaled.on_input(pointer(12.0, 0.0), start + Duration::from_millis(400), 2.0));
-        assert!(scaled.on_input(pointer(16.0, 0.0), start + Duration::from_millis(410), 2.0));
+        assert!(!scaled.on_input(pointer(0.0, 0.0), after_grace, 2.0));
+        assert!(!scaled.on_input(
+            pointer(12.0, 0.0),
+            after_grace + Duration::from_millis(10),
+            2.0
+        ));
+        assert!(scaled.on_input(
+            pointer(16.0, 0.0),
+            after_grace + Duration::from_millis(20),
+            2.0
+        ));
 
         let mut refocused = Dismissal::new(start);
         assert!(!refocused.on_input(pointer(10.0, 10.0), start, 1.0));
-        assert!(!refocused.handles(
-            &WindowEvent::Focused(false),
-            start + Duration::from_millis(400),
-            1.0
-        ));
+        assert!(!refocused.handles(&WindowEvent::Focused(false), after_grace, 1.0));
         assert_eq!(
             refocused.on_input(
                 pointer(100.0, 100.0),
-                start + Duration::from_millis(500),
+                after_grace + Duration::from_millis(10),
                 1.0
             ),
             !cfg!(target_os = "windows")
@@ -789,11 +847,7 @@ mod tests {
 
         let mut no_initial_position = Dismissal::new(start);
         assert_eq!(
-            no_initial_position.on_input(
-                pointer(100.0, 100.0),
-                start + Duration::from_millis(400),
-                1.0
-            ),
+            no_initial_position.on_input(pointer(100.0, 100.0), after_grace, 1.0),
             !cfg!(target_os = "windows")
         );
 
@@ -807,7 +861,7 @@ mod tests {
             DismissalInput::Scroll { moved: true },
             DismissalInput::Touch { started: true },
         ] {
-            assert!(Dismissal::new(start).on_input(input, start, 1.0));
+            assert!(Dismissal::new(start).on_input(input, after_grace, 1.0));
         }
         for input in [
             DismissalInput::Key {
@@ -822,6 +876,20 @@ mod tests {
             DismissalInput::MouseButton { pressed: false },
             DismissalInput::Scroll { moved: false },
             DismissalInput::Touch { started: false },
+        ] {
+            assert!(!Dismissal::new(start).on_input(input, start, 1.0));
+        }
+
+        #[cfg(target_os = "windows")]
+        for input in [
+            DismissalInput::Key {
+                pressed: true,
+                synthetic: false,
+            },
+            DismissalInput::Modifier { active: true },
+            DismissalInput::MouseButton { pressed: true },
+            DismissalInput::Scroll { moved: true },
+            DismissalInput::Touch { started: true },
         ] {
             assert!(!Dismissal::new(start).on_input(input, start, 1.0));
         }
