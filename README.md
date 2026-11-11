@@ -2,6 +2,28 @@
 
 A native Rust Matrix animation with modern 3D and classic 2D rain. It renders rain, bloom, and color entirely on the GPU. It runs in a resizable window by default or opens full-screen windows with `--screensaver`.
 
+## Previews
+
+### Matrix Classic Green
+
+![Classic green Matrix rain](preview-1-classic-green.jpg)
+
+### Matrix Modern Green
+
+![Modern green Matrix rain](preview-2-modern-green.jpg)
+
+### Matrix Modern Blue
+
+![Modern blue Matrix rain](preview-3-modern-blue.jpg)
+
+### Matrix Modern Red
+
+![Modern red Matrix rain](preview-4-modern-red.jpg)
+
+### Matrix Modern Yellow
+
+![Modern yellow Matrix rain](preview-5-modern-yellow.jpg)
+
 ## Build and run
 
 On Arch/Omarchy, install a Rust toolchain and native build prerequisites:
