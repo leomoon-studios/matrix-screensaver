@@ -40,11 +40,19 @@ int main(int argc, const char *argv[]) {
                       styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
                         backing:NSBackingStoreBuffered
                           defer:NO];
+        window.releasedWhenClosed = NO;
         window.title = @"Matrix Screensaver preview test";
         window.contentView = view;
         [window center];
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+        [view animateOneFrame];
+        SEL rendererSelector = @selector(matrixRenderer);
+        void *(*rendererGetter)(id, SEL) = (void *(*)(id, SEL))[view methodForSelector:rendererSelector];
+        if (!rendererGetter || !rendererGetter(view, rendererSelector)) {
+            fprintf(stderr, "the preview did not create a renderer for its first frame\n");
+            return 1;
+        }
         [view startAnimation];
         RunFrames(view, 4.0);
         [window setContentSize:NSMakeSize(720, 720)];

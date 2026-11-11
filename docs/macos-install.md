@@ -2,9 +2,9 @@
 
 The package contains a universal `Matrix Screensaver.saver` bundle for Apple Silicon and Intel Macs. It uses the system `ScreenSaverView` lifecycle and Metal renderer. Rust and development tools are not required after the bundle is built.
 
-Open the `.saver` bundle and approve installation for the current user, or copy it to `~/Library/Screen Savers/`. Then open **System Settings > Screen Saver** and select **Matrix Screensaver**. macOS controls full-screen presentation, activity dismissal, authentication, and one screensaver view per display.
+Open the `.saver` bundle and approve installation for the current user, or copy it to `~/Library/Screen Savers/`. Then open **System Settings > Screen Saver** and select **Matrix Screensaver**. Use **Options** to choose the effect, color, frame rate, and render scale. Save updates the preview; Cancel leaves the current settings unchanged. macOS controls full-screen presentation, activity dismissal, authentication, and one screensaver view per display.
 
-The default is modern green rain at 30 FPS and 0.5 internal render scale. Advanced choices can be set in Terminal before opening the preview:
+The default is modern green rain at 30 FPS and 0.5 internal render scale. The same choices can be set in Terminal before opening the preview:
 
 ```bash
 defaults write com.leomoon-studios.matrix-screensaver type classic
