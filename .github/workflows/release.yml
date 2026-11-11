@@ -1,0 +1,226 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Platform to build
+        required: true
+        default: all
+        type: choice
+        options: [all, linux, windows, macos]
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      release_date: ${{ steps.metadata.outputs.release_date }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Validate version, tag, and changelog
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+          else
+            version="$package_version"
+            tag="v$version"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag: $tag" >&2; exit 1; }
+          [[ "$version" == "$package_version" ]] || { echo "Tag version $version does not match Cargo.toml $package_version" >&2; exit 1; }
+          changelog_header="$(grep -E "^## $version \([0-9]{4}-[0-9]{2}-[0-9]{2}\)$" CHANGELOG.md || true)"
+          [[ -n "$changelog_header" ]] || { echo "CHANGELOG.md has no $version entry" >&2; exit 1; }
+          release_date="${changelog_header#*\(}"
+          release_date="${release_date%\)}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_date=$release_date" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux release build
+    if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'linux'
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux dependencies and Rust
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+          rustup toolchain install 1.99.1 --profile minimal
+      - name: Test, build, package, and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.99.1 test --locked
+          cargo +1.99.1 build --release --locked --bin matrix-screensaver
+          scripts/package-linux.sh
+          cd dist
+          sha256sum --check matrix-screensaver-${{ needs.validate.outputs.version }}-linux-x86_64.tar.gz.sha256
+          tar -tzf matrix-screensaver-${{ needs.validate.outputs.version }}-linux-x86_64.tar.gz > "$RUNNER_TEMP/linux-archive.txt"
+          grep -q '/matrix-screensaver$' "$RUNNER_TEMP/linux-archive.txt"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: matrix-screensaver-linux-release-${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows release build
+    if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'windows'
+    needs: validate
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        shell: pwsh
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Test, build, package, and verify
+        shell: pwsh
+        run: |
+          cargo +1.99.1 test --locked
+          cargo +1.99.1 build --release --locked --bin matrix-screensaver
+          cargo +1.99.1 build --release --locked --bin matrix-screensaver-scr --features windows-saver-host
+          ./scripts/package-windows.ps1
+          $version = '${{ needs.validate.outputs.version }}'
+          $archive = "dist/matrix-screensaver-$version-windows-x86_64.zip"
+          $packageFiles = @(
+            'dist/windows/Matrix Screensaver.scr'
+            'dist/windows/matrix-screensaver.png'
+            'dist/windows/LICENSE'
+            'dist/windows/third-party-notices.md'
+            'dist/windows/windows-install.md'
+          )
+          Compress-Archive -LiteralPath $packageFiles -DestinationPath $archive -Force
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path -Leaf $archive)" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+          $check = Join-Path $env:RUNNER_TEMP 'matrix-screensaver-windows-check'
+          Expand-Archive -LiteralPath $archive -DestinationPath $check
+          foreach ($file in @('Matrix Screensaver.scr','matrix-screensaver.png','LICENSE','third-party-notices.md','windows-install.md')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $check $file))) { throw "Missing $file from Windows archive" }
+          }
+      - uses: actions/upload-artifact@v6
+        with:
+          name: matrix-screensaver-windows-release-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS release build
+    if: github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'macos'
+    needs: validate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Test, build universal bundle, package, and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.99.1 test --locked
+          export MATRIX_RUST_TOOLCHAIN=+1.99.1
+          export MATRIX_MACOS_ARCHS='arm64 x86_64'
+          export MATRIX_EXPECT_MACOS_ARCHS='arm64 x86_64'
+          scripts/package-macos.sh
+          scripts/check-macos-bundle.sh
+          cd dist/macos
+          shasum -a 256 -c matrix-screensaver-${{ needs.validate.outputs.version }}-macos.zip.sha256
+      - uses: actions/upload-artifact@v6
+        with:
+          name: matrix-screensaver-macos-release-${{ github.sha }}
+          path: |
+            dist/macos/*.zip
+            dist/macos/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    if: github.event_name == 'push'
+    needs: [validate, linux, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download verified release builds
+        uses: actions/download-artifact@v7
+        with:
+          pattern: matrix-screensaver-*-release-${{ github.sha }}
+          path: release-assets
+          merge-multiple: true
+      - name: Generate release notes with changelog and commits
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.validate.outputs.version }}"
+          tag="${{ needs.validate.outputs.tag }}"
+          previous_tag="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
+          commit_range="${previous_tag:+$previous_tag..}$tag"
+          {
+            echo "Released: ${{ needs.validate.outputs.release_date }}"
+            echo
+            echo "## Changes"
+            awk -v version="$version" '
+              $0 ~ "^## " version " \\(" { active=1; next }
+              active && /^## / { exit }
+              active { print }
+            ' CHANGELOG.md
+            echo "## Commits"
+            while IFS= read -r commit_hash; do
+              subject="$(git show -s --format=%s "$commit_hash")"
+              author_name="$(git show -s --format=%an "$commit_hash")"
+              author_login="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit_hash" --jq '.author.login // empty' 2>/dev/null || true)"
+              if [[ -n "$author_login" ]]; then
+                printf -- '- %s ([`%s`](https://github.com/%s/commit/%s) by [%s](https://github.com/%s))\n' "$subject" "${commit_hash:0:7}" "$GITHUB_REPOSITORY" "$commit_hash" "$author_name" "$author_login"
+              else
+                printf -- '- %s ([`%s`](https://github.com/%s/commit/%s) by %s)\n' "$subject" "${commit_hash:0:7}" "$GITHUB_REPOSITORY" "$commit_hash" "$author_name"
+              fi
+            done < <(git rev-list "$commit_range")
+            echo
+            echo "## Downloads"
+            echo
+            echo "Linux, Windows, and macOS release builds and their SHA-256 checksums are attached below."
+          } > release-notes.md
+      - name: Create release and upload builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.validate.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag" --notes-file release-notes.md
+          else
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file release-notes.md
+          fi
+          gh release upload "$tag" release-assets/* --clobber

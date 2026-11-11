@@ -22,6 +22,9 @@ executable_name=MatrixScreenSaver
 rm -rf "$build_root" "$bundle"
 mkdir -p "$build_root" "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$repo_root/macos/Info.plist" "$bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$bundle/Contents/Info.plist"
+bundle_version=${version//./}
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$bundle/Contents/Info.plist"
 cp "$repo_root/LICENSE" "$bundle/Contents/Resources/LICENSE"
 cp "$repo_root/docs/third-party-notices.md" "$bundle/Contents/Resources/THIRD-PARTY-NOTICES.md"
 cp "$repo_root/docs/macos-install.md" "$bundle/Contents/Resources/INSTALL.md"
